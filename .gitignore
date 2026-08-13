@@ -1,0 +1,52 @@
+# --- live-build working tree -------------------------------------------
+# Everything lb creates while building.  All of it is reproducible from
+# config/ + build.sh, and the chroot alone is several GB.
+/chroot/
+/binary/
+/cache/
+/.build/
+/out/
+/local/
+
+# Build reports lb drops in the project root.
+/chroot.files
+/chroot.packages.*
+/binary.modified_timestamps
+/moonlight-os-*.files
+/moonlight-os-*.packages
+/*.iso
+/*.zsync
+/*.log
+/build.log
+
+# --- lb config output ---------------------------------------------------
+# `lb config` rewrites these on every build from auto/config, so tracking
+# them only produces noise.
+/config/binary
+/config/bootstrap
+/config/chroot
+/config/common
+/config/source
+
+# --- payloads staged into the image tree --------------------------------
+# Downloaded or built by build.sh, not authored here.
+/config/includes.chroot/opt/moonlight/
+/config/includes.chroot/opt/moonlight-os-host-utils/
+/config/includes.chroot/usr/bin/tailscale
+/config/includes.chroot/usr/bin/.tailscale-version
+/config/includes.chroot/usr/sbin/tailscaled
+/config/includes.chroot/etc/systemd/system/tailscaled.service
+/config/includes.chroot/etc/default/tailscaled
+
+# SSH public keys of whoever ran the build -- never commit these.
+/config/includes.chroot/etc/moonlight-os/authorized_keys
+
+# --- host utils ---------------------------------------------------------
+/host-utils/dist/
+
+# --- misc ---------------------------------------------------------------
+/backups/
+*.tmp
+*.part
+*.swp
+.DS_Store

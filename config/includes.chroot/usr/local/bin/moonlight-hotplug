@@ -1,0 +1,60 @@
+#!/bin/sh
+# Watch for monitors being plugged in and unplugged, and rearrange to suit.
+#
+# This is a laptop appliance: it gets carried to a monitor, plugged in, and
+# carried away again, and none of that should need a menu.  Started by
+# moonlight-xsession and dies with the session.
+#
+# shellcheck source=./moonlight-common
+. /usr/local/bin/moonlight-common
+
+[ -n "${DISPLAY:-}" ] || exit 0
+
+INTERVAL="${MLOS_HOTPLUG_INTERVAL:-2}"
+
+# Just the names and their connected/disconnected state -- resolution changes
+# made from the menu must not look like a hotplug and start a loop.
+state() {
+	xrandr --query 2>/dev/null \
+		| awk '/ connected| disconnected/ {print $1, $2}'
+}
+
+log() {
+	printf '%s moonlight-hotplug: %s\n' "$(date '+%H:%M:%S')" "$1"
+}
+
+last="$(state)"
+
+while :; do
+	sleep "$INTERVAL"
+	now="$(state)"
+
+	# An empty read means the X server went away; so should we.
+	[ -n "$now" ] || exit 0
+	[ "$now" = "$last" ] && continue
+
+	log "screens changed"
+	last="$now"
+
+	# The screen actually in use before this change, which is not always
+	# the one that was asked for.
+	before="$(cat "$MLOS_STATE/current-output" 2>/dev/null)"
+
+	# Settle: a monitor coming up over DisplayPort can report connected
+	# before its mode list is readable, and building a layout from half of
+	# an EDID produces a blank screen.
+	sleep 1
+
+	moonlight-displays --apply
+
+	after="$(cat "$MLOS_STATE/current-output" 2>/dev/null)"
+	if [ "$after" != "$before" ]; then
+		# Either the screen it was drawing on went away, or the one you
+		# actually asked for came back.  Moonlight picks its display once,
+		# at start-up, so it has to be restarted to follow.
+		log "moonlight moving from ${before:-none} to ${after:-none}, restarting it"
+		mlos_restart_moonlight
+	else
+		log "layout reapplied, moonlight stays on ${after:-auto}"
+	fi
+done

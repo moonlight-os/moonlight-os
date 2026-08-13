@@ -1,0 +1,52 @@
+#!/bin/sh
+# Trim the image.  Everything removed here is documentation or tooling that
+# an appliance with no shell-facing users will never open.
+set -e
+
+rm -rf /usr/share/doc/* \
+       /usr/share/man/* \
+       /usr/share/info/* \
+       /usr/share/lintian \
+       /usr/share/linda \
+       /var/cache/apt/archives/*.deb \
+       /var/lib/apt/lists/* \
+       /var/cache/debconf/*-old \
+       /var/lib/dpkg/*-old
+
+# Keep only English locales.
+find /usr/share/locale -mindepth 1 -maxdepth 1 -type d \
+	! -name 'en*' ! -name 'C*' -exec rm -rf {} + 2>/dev/null || true
+
+# The AppImage ships its own copies of Qt's translations and docs.
+rm -rf /opt/moonlight/usr/share/doc 2>/dev/null || true
+
+# The C compiler proper, 33 MB of it.  x11-xserver-utils depends on cpp
+# because xrdb pipes X resource files through a preprocessor -- and xrdb is
+# never run here.  The package has to stay to satisfy the dependency; its
+# payload does not.
+rm -rf /usr/libexec/gcc/x86_64-linux-gnu/*/cc1 \
+       /usr/libexec/gcc/x86_64-linux-gnu/*/cc1plus \
+       2>/dev/null || true
+
+# PostScript and PDF rendering, which arrives by a genuinely silly route:
+# openbox -> libobrender -> imlib2 -> libspectre -> ghostscript.  It is there
+# so imlib2 could load a PostScript file as an image, which openbox will never
+# ask it to do, least of all here where window decorations are switched off.
+# The libraries stay (imlib2 links them at load time); the data does not.
+rm -rf /usr/share/poppler \
+       /usr/share/ghostscript \
+       /usr/share/color/icc/ghostscript \
+       2>/dev/null || true
+
+# /usr/share/consolefonts is 8 MB and mostly scripts this image will never
+# render, but it is deliberately left alone: console-setup has CODESET=guess,
+# the console font is what the whole settings UI is drawn in, and 2 MB is a
+# poor trade against an unreadable menu on some machine that guesses
+# differently.
+
+# Drop firmware for hardware that cannot plausibly be a streaming client.
+rm -rf /lib/firmware/netronome /lib/firmware/liquidio /lib/firmware/qed \
+       /lib/firmware/bnx2x /lib/firmware/cxgb4 /lib/firmware/dpaa2 \
+       2>/dev/null || true
+
+apt-get clean

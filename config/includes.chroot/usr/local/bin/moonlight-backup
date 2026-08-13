@@ -1,0 +1,197 @@
+#!/bin/sh
+# Save and restore everything that is yours rather than the image's.
+#
+#   moonlight-backup --save [dir]              write a settings archive
+#   moonlight-backup --restore <file>          put one back
+#   moonlight-backup --save-from <root> <dir>  read them out of another root
+#   moonlight-backup --restore-to <root> <f>   write them into another root
+#   moonlight-backup --list                    what would be saved
+#   moonlight-backup --menu                    the interactive version
+#
+# The two "other root" forms are what lets the installer carry your settings
+# across a reinstall: it harvests them from the disk it is about to erase,
+# then puts them back into the fresh system.
+#
+# Reinstalling wipes the disk, so this is what stands between a rebuild and
+# re-pairing Moonlight, retyping the Wi-Fi password, and logging back into
+# Tailscale.  The installer calls --save itself before it erases anything.
+#
+# shellcheck source=./moonlight-common
+. /usr/local/bin/moonlight-common
+
+# Everything here is either something you typed or something a daemon
+# generated that identifies this machine.  Nothing that the image provides.
+PATHS="
+/etc/moonlight-os/moonlight-os.conf
+/etc/NetworkManager/system-connections
+/etc/X11/xorg.conf.d/00-keyboard.conf
+/etc/X11/xorg.conf.d/40-touchpad.conf
+/etc/default/keyboard
+/etc/timezone
+/etc/ssh/sshd_config.d/10-moonlight-os.conf
+/var/lib/tailscale
+/var/lib/bluetooth
+/home/moonlight/.ssh/authorized_keys
+/home/moonlight/.local/state/wireplumber
+"
+# Kept separate only because the directory name has spaces in it.
+QT_DIRS="
+/home/moonlight/.config/Moonlight Game Streaming Project
+/home/moonlight/.config/fastfetch
+"
+
+STAMP="moonlight-os-settings-$(date +%Y%m%d-%H%M%S).tar.gz"
+
+# Paths relative to ROOT, so the same list works on the running system and on
+# a disk mounted somewhere else.  ROOT is "" for the running system.
+ROOT=""
+
+existing() {
+	for p in $PATHS; do
+		[ -e "$ROOT$p" ] && printf '%s\n' "${p#/}"
+	done
+	printf '%s\n' "$QT_DIRS" | while IFS= read -r p; do
+		[ -n "$p" ] || continue
+		[ -e "$ROOT$p" ] && printf '%s\n' "${p#/}"
+	done
+	# SSH host keys, so reconnecting does not trip the fingerprint warning.
+	for k in "$ROOT"/etc/ssh/ssh_host_*; do
+		[ -e "$k" ] && printf '%s\n' "${k#"$ROOT"/}"
+	done
+}
+
+# Somewhere removable, or the current directory as a fallback.
+default_dest() {
+	for d in /media/* /run/media/*/* /mnt/*; do
+		[ -d "$d" ] && [ -w "$d" ] && { printf '%s' "$d"; return; }
+	done
+	printf '%s' "${HOME:-/tmp}"
+}
+
+do_save() {
+	dest="${1:-$(default_dest)}"
+	[ -d "$dest" ] || { printf 'no such directory: %s\n' "$dest" >&2; return 1; }
+	out="$dest/$STAMP"
+
+	list=$(mktemp)
+	existing > "$list"
+	if [ ! -s "$list" ]; then
+		printf 'nothing to save\n' >&2
+		rm -f "$list"
+		return 1
+	fi
+
+	# -T so paths containing spaces survive, and everything is stored
+	# relative so a restore cannot escape somewhere unexpected.
+	#
+	# tar's own complaint is kept and shown: swallowing it just produces a
+	# "could not write" with no way to find out why.
+	# Unlink first.  In a sticky, world-writable directory like /tmp the
+	# kernel's fs.protected_regular refuses to open someone else's file for
+	# writing -- and it refuses root too, so the installer saving over a
+	# backup you made yourself would fail with a bare "permission denied".
+	mlos_root rm -f "$out"
+
+	err=$(mktemp)
+	if ! mlos_root tar czf "$out" -C "${ROOT:-/}" -T "$list" 2>"$err"; then
+		printf 'could not write %s\n' "$out" >&2
+		sed 's/^/  tar: /' "$err" >&2
+		rm -f "$list" "$err"
+		return 1
+	fi
+	rm -f "$err"
+	mlos_root chmod 0600 "$out"
+	[ "$(id -u)" = "0" ] || mlos_root chown "$(id -u):$(id -g)" "$out"
+	rm -f "$list"
+	printf '%s\n' "$out"
+}
+
+do_restore() {
+	src="$1"
+	[ -f "$src" ] || { printf 'no such file: %s\n' "$src" >&2; return 1; }
+	mlos_root tar xzf "$src" -C "${ROOT:-/}" || return 1
+
+	# Ownership: the archive was made as root, and the user's own files have
+	# to go back to the user or Moonlight and sshd both ignore them.
+	mlos_root chown -R moonlight:moonlight "$ROOT/home/moonlight" 2>/dev/null || true
+	mlos_root chmod 0700 "$ROOT/home/moonlight/.ssh" 2>/dev/null || true
+	mlos_root chmod 0600 "$ROOT/home/moonlight/.ssh/authorized_keys" 2>/dev/null || true
+	mlos_root sh -c 'chmod 0600 "$1"/etc/ssh/ssh_host_*_key' _ "${ROOT:-/}" 2>/dev/null || true
+	mlos_root chmod 0700 "$ROOT/etc/NetworkManager/system-connections" 2>/dev/null || true
+	mlos_root sh -c 'chmod 0600 "$1"/etc/NetworkManager/system-connections/*' _ "${ROOT:-/}" 2>/dev/null || true
+	return 0
+}
+
+find_archives() {
+	for d in /media/* /run/media/*/* /mnt/* /run/live/medium "$HOME"; do
+		[ -d "$d" ] || continue
+		for f in "$d"/moonlight-os-settings-*.tar.gz; do
+			[ -f "$f" ] && printf '%s\n' "$f"
+		done
+	done 2>/dev/null
+}
+
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+menu() {
+	while :; do
+		choice=$(whiptail --title "Settings backup" --menu \
+"Saves what is yours -- Moonlight's pairing, Wi-Fi passwords,
+Tailscale, Bluetooth, keyboard and display setup -- so that
+reinstalling does not mean setting it all up again." 20 74 4 \
+			1 "Save settings to a USB stick" \
+			2 "Restore settings from a backup" \
+			3 "Show what would be saved" \
+			4 "Back" \
+			3>&1 1>&2 2>&3) || return 0
+
+		case "$choice" in
+			1) dest=$(whiptail --title "Save settings" --inputbox \
+				"Where to write the backup:" 10 74 "$(default_dest)" \
+				3>&1 1>&2 2>&3) || continue
+			   if out=$(do_save "$dest"); then
+				   mlos_msg "Saved to:\n\n$out\n\nKeep it somewhere that is not this machine."
+			   else
+				   mlos_msg "Could not save to $dest.\n\nIs a USB stick plugged in and writable?"
+			   fi ;;
+			2) archives=$(find_archives)
+			   if [ -z "$archives" ]; then
+				   mlos_msg "No backup found.\n\nPlug in the USB stick with the moonlight-os-settings-*.tar.gz file on it."
+				   continue
+			   fi
+			   menu_items=""
+			   n=0
+			   for f in $archives; do
+				   n=$((n + 1))
+				   menu_items="$menu_items $n $(sq "$f")"
+			   done
+			   pick=$(eval whiptail --title '"Restore settings"' --menu \
+				   "$(sq 'Which backup?')" 18 78 8 -- "$menu_items" \
+				   3>&1 1>&2 2>&3) || continue
+			   file=$(printf '%s\n' $archives | sed -n "${pick}p")
+			   if mlos_yesno "Restore from:\n\n$file\n\nThis overwrites the current settings."; then
+				   if do_restore "$file"; then
+					   mlos_msg "Restored.\n\nReboot to pick all of it up."
+				   else
+					   mlos_msg "That did not work. The archive may be damaged."
+				   fi
+			   fi ;;
+			3) rep=$(mktemp)
+			   existing > "$rep"
+			   whiptail --title "Would be saved" --scrolltext --textbox "$rep" 22 78
+			   rm -f "$rep" ;;
+			4) return 0 ;;
+		esac
+	done
+}
+
+case "${1:---menu}" in
+	--save)       do_save "$2" ;;
+	--restore)    do_restore "$2" ;;
+	--save-from)  ROOT="${2%/}"; do_save "$3" ;;
+	--restore-to) ROOT="${2%/}"; do_restore "$3" ;;
+	--list)       existing ;;
+	--menu)       menu ;;
+	*) printf 'usage: moonlight-backup [--save [dir]|--restore <file>|--save-from <root> <dir>|--restore-to <root> <file>|--list|--menu]\n' >&2
+	   exit 2 ;;
+esac

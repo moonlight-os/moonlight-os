@@ -1,0 +1,8 @@
+#!/bin/sh
+# Moonlight OS.
+#
+# `startx` is normally called by moonlight-session with an explicit client, in
+# which case this file is not used.  It exists as a safety net: if anything
+# else starts a bare `startx` (live-config's xinit component does exactly
+# that), the user still lands in Moonlight instead of an empty grey desktop.
+exec /usr/local/bin/moonlight-xsession

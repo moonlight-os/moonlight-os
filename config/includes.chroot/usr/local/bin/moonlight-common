@@ -1,0 +1,214 @@
+#!/bin/sh
+# Shared helpers for the Moonlight OS session scripts.  Sourced, not run.
+
+MLOS_CONF=/etc/moonlight-os/moonlight-os.conf
+MLOS_STATE=/var/lib/moonlight-os
+MLOS_SNAPSHOT="$MLOS_STATE/outputs.snapshot"
+
+mlos_load() {
+	MOONLIGHT_OUTPUT=""
+	DISPLAY_MODE="single"
+	XRANDR_ARGS=""
+	MODE_OVERRIDES=""
+	# "HDMI-1=left eDP-1=normal" and "HDMI-1=above", both relative to the
+	# screen Moonlight opens on.
+	ROTATIONS=""
+	SCREEN_SIDES=""
+	AUTOCONNECT_HOST=""
+	AUTOCONNECT_APP=""
+	KEYBOARD_LAYOUT=""
+	KEYBOARD_VARIANT=""
+	TIMEZONE=""
+	FORCE_SOFTWARE="no"
+	WINDOW_MODE="borderless"
+	STREAM_WIDTH=""
+	STREAM_HEIGHT=""
+	STREAM_FPS="60"
+	STREAM_BITRATE="0"
+	AUDIO_CONFIG="stereo"
+	HOST_AUDIO="no"
+	CAPTURE_SYS_KEYS="yes"
+	NATURAL_SCROLL="no"
+	BATTERY_WARN="yes"
+	BATTERY_LEVELS="20 10 5"
+	# USB passthrough to a host PC running moonlight-os-host-utils.
+	USB_AUTOSHARE="no"
+	USB_AUTOSHARE_POLICY="safe"
+	USB_AUTOSHARE_INCLUDE=""
+	USB_AUTOSHARE_EXCLUDE=""
+	USB_HOST_ADDR=""
+	USB_HOST_PORT="48020"
+	USB_HOST_TOKEN=""
+	# shellcheck disable=SC1090
+	[ -r "$MLOS_CONF" ] && . "$MLOS_CONF"
+}
+
+# mlos_set KEY VALUE -- rewrite one key in the config file.
+#
+# The file lives in /etc and is owned by root, while everything here runs as
+# the unprivileged session user, so the write has to go through sudo.  Doing
+# it directly fails with EACCES and -- because the failure is on a redirect --
+# does so silently, which loses every setting the menus think they saved.
+mlos_set() {
+	key="$1"
+	val="$2"
+	tmp="$(mktemp)"
+	if [ -r "$MLOS_CONF" ]; then
+		grep -v "^${key}=" "$MLOS_CONF" > "$tmp" 2>/dev/null || true
+	fi
+	printf '%s="%s"\n' "$key" "$val" >> "$tmp"
+
+	mlos_root mkdir -p "$(dirname "$MLOS_CONF")"
+	if ! mlos_root cp "$tmp" "$MLOS_CONF"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	# mktemp makes files 0600.  Overwriting keeps the existing mode, but if
+	# the file ever has to be created fresh it would end up unreadable to
+	# this very user -- losing settings the same silent way.
+	mlos_root chmod 0644 "$MLOS_CONF"
+	rm -f "$tmp"
+}
+
+# Run a command as root.  The session user has passwordless sudo for the
+# handful of things that need it (nmcli is allowed for the user directly).
+mlos_root() {
+	if [ "$(id -u)" = "0" ]; then
+		"$@"
+	else
+		sudo -n "$@"
+	fi
+}
+
+# whiptail draws its widget on stdout.  These get called from inside command
+# substitutions (pick_disk, pick_output, ...), where stdout is a pipe -- so
+# the dialog has to be aimed at the terminal explicitly or it is swallowed
+# and silently corrupts the caller's return value.
+#
+# They also get called from the hotplug watcher, which is a daemon with no
+# terminal at all -- there, a whiptail box would simply fail, so the text goes
+# to the log instead and a question answers itself with "no".
+#
+# The test runs in a subshell on purpose.  ":" is a POSIX special builtin, and
+# a redirection that fails on one of those takes the whole shell down with it
+# -- so with no controlling terminal this function did not report "no tty", it
+# killed the script that asked.  The subshell dies instead and we get our
+# answer back as an exit status, which is all that was ever wanted.
+mlos_have_tty() { ( : > /dev/tty ) 2>/dev/null; }
+
+mlos_msg() {
+	if mlos_have_tty; then
+		whiptail --title "Moonlight OS" --msgbox "$1" 12 74 >/dev/tty 2>/dev/tty
+	else
+		printf '%s\n' "$1" >&2
+	fi
+}
+
+mlos_yesno() {
+	if mlos_have_tty; then
+		whiptail --title "Moonlight OS" --yesno "$1" 12 74 >/dev/tty 2>/dev/tty
+	else
+		return 1
+	fi
+}
+
+# True when at least one NetworkManager device has an active connection.
+mlos_online() {
+	nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -qE ':connected$'
+}
+
+mlos_have_wifi() {
+	nmcli -t -f DEVICE,TYPE device 2>/dev/null | grep -q ':wifi$'
+}
+
+mlos_ip() {
+	ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1
+}
+
+MLOS_QT_CONF="$HOME/.config/Moonlight Game Streaming Project/Moonlight.conf"
+
+# Moonlight keeps its own settings in a Qt ini file, and the launcher reads
+# them from there rather than from any command line.  These two put one key in
+# the [General] section without disturbing the client certificate or the list
+# of paired hosts sitting alongside it.  Enums are stored as plain integers.
+mlos_qt_get() {
+	sed -n "s/^$1=//p" "$MLOS_QT_CONF" 2>/dev/null | head -1
+}
+
+mlos_qt_set() {
+	mkdir -p "$(dirname "$MLOS_QT_CONF")" 2>/dev/null || true
+	tmp="$(mktemp)"
+	if [ -f "$MLOS_QT_CONF" ] && grep -q '^\[General\]' "$MLOS_QT_CONF"; then
+		awk -v k="$1" -v v="$2" '
+			/^\[General\]$/ { print; print k "=" v; next }
+			$0 ~ "^" k "="  { next }
+			{ print }
+		' "$MLOS_QT_CONF" > "$tmp" && cat "$tmp" > "$MLOS_QT_CONF"
+	else
+		printf '[General]\n%s=%s\n' "$1" "$2" > "$tmp"
+		[ -f "$MLOS_QT_CONF" ] && cat "$MLOS_QT_CONF" >> "$tmp"
+		cat "$tmp" > "$MLOS_QT_CONF"
+	fi
+	rm -f "$tmp"
+}
+
+# Remove a key entirely.  Not the same as setting it to zero: Moonlight fills
+# some settings in from the others when they are absent, and the bitrate is
+# one of them.
+mlos_qt_del() {
+	[ -f "$MLOS_QT_CONF" ] || return 0
+	tmp="$(mktemp)"
+	grep -v "^$1=" "$MLOS_QT_CONF" > "$tmp" 2>/dev/null || true
+	[ -s "$tmp" ] && cat "$tmp" > "$MLOS_QT_CONF"
+	rm -f "$tmp"
+}
+
+# Current mode of the screen Moonlight will open on, as "1920x1080".  Taken
+# from the geometry on the output's own line, which is the resolution the
+# screen is actually running at right now.  Empty if X is not up.
+mlos_screen_mode() {
+	[ -n "${DISPLAY:-}" ] || return 0
+	xrandr --query 2>/dev/null | awk '
+		/ connected primary / && !done {
+			for (i = 1; i <= NF; i++)
+				if ($i ~ /^[0-9]+x[0-9]+\+/) { split($i, a, "+"); print a[1]; done = 1; exit }
+		}
+		/ connected / && !done && !/disconnected/ {
+			for (i = 1; i <= NF; i++)
+				if ($i ~ /^[0-9]+x[0-9]+\+/) { split($i, a, "+"); fallback = a[1] }
+		}
+		END { if (!done && fallback != "") print fallback }
+	'
+}
+
+# Put text on this machine's clipboard.  Only possible inside X, and xclip
+# has to keep running to own the selection -- it backgrounds itself for that.
+mlos_clip() {
+	[ -n "${DISPLAY:-}" ] || return 1
+	command -v xclip >/dev/null 2>&1 || return 1
+	printf '%s' "$1" | xclip -selection clipboard >/dev/null 2>&1 || return 1
+	printf '%s' "$1" | xclip -selection primary >/dev/null 2>&1 || true
+	return 0
+}
+
+# True when we are running inside the X session rather than on the console.
+mlos_in_x() {
+	[ -n "${DISPLAY:-}" ] && command -v xdotool >/dev/null 2>&1
+}
+
+# Ask the running Moonlight to exit so the session loop starts it again with
+# whatever was just changed.  Video settings are read once at start-up.
+#
+# By pid, not by name.  "pkill -f /opt/moonlight/" also matches anything that
+# merely mentions the path on its command line -- including the shell of an
+# SSH session that was inspecting it, which is exactly how this was found.
+mlos_restart_moonlight() {
+	: > "$MLOS_STATE/restart" 2>/dev/null || return 1
+	pid=$(cat "$MLOS_STATE/moonlight.pid" 2>/dev/null)
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		kill "$pid" 2>/dev/null
+	else
+		# No pidfile: an older session, or Moonlight started by hand.
+		pkill -x AppRun 2>/dev/null || true
+	fi
+}

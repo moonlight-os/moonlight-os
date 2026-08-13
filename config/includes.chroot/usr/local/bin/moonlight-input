@@ -1,0 +1,83 @@
+#!/bin/sh
+# Pointer behaviour.  Currently one knob: which way the trackpad scrolls.
+#
+#   moonlight-input --apply   push the saved setting into the running session
+#   moonlight-input --menu    change it
+#
+# Moonlight has a reverse-scroll setting of its own, and leaving both on
+# means they cancel out during a stream and nothing appears to change.  So
+# this is the single source of truth: libinput does the inverting, and
+# Moonlight's own flag is held off.
+#
+# shellcheck source=./moonlight-common
+. /usr/local/bin/moonlight-common
+
+CONF=/etc/X11/xorg.conf.d/40-touchpad.conf
+
+# Persisted for the next X server; libinput reads this at device add time.
+write_conf() {
+	printf 'Section "InputClass"\n\tIdentifier "moonlight-os touchpad"\n\tMatchIsTouchpad "on"\n\tDriver "libinput"\n\tOption "NaturalScrolling" "%s"\nEndSection\n' "$1" \
+		| mlos_root tee "$CONF" >/dev/null
+}
+
+# ...and into the devices that already exist, so it takes effect now.
+apply_live() {
+	[ -n "${DISPLAY:-}" ] || return 0
+	command -v xinput >/dev/null 2>&1 || return 0
+	xinput list --name-only 2>/dev/null | while IFS= read -r dev; do
+		case "$dev" in
+			*[Tt]ouch[Pp]ad*|*[Tt]ouchpad*)
+				xinput set-prop "$dev" "libinput Natural Scrolling Enabled" "$1" \
+					>/dev/null 2>&1 || true
+				;;
+		esac
+	done
+}
+
+apply() {
+	mlos_load
+	if [ "${NATURAL_SCROLL:-no}" = "yes" ]; then
+		write_conf "true"
+		apply_live 1
+	else
+		write_conf "false"
+		apply_live 0
+	fi
+	# Keep Moonlight from inverting it a second time.
+	mlos_qt_set reversescroll false
+}
+
+menu() {
+	while :; do
+		mlos_load
+		if [ "${NATURAL_SCROLL:-no}" = "yes" ]; then
+			now="inverted (content follows your fingers)"
+		else
+			now="standard (content moves the other way)"
+		fi
+
+		choice=$(whiptail --title "Trackpad" --menu \
+"Scroll direction: $now
+
+This applies to the menus here, and to what
+gets sent to the host PC while streaming." 18 74 3 \
+			1 "Standard" \
+			2 "Inverted" \
+			3 "Back" \
+			3>&1 1>&2 2>&3) || return 0
+
+		case "$choice" in
+			1) mlos_set NATURAL_SCROLL no; apply
+			   mlos_msg "Trackpad scrolls the standard way now." ;;
+			2) mlos_set NATURAL_SCROLL yes; apply
+			   mlos_msg "Trackpad scroll inverted.\n\nIt is live already; a stream picks it up when Moonlight next starts." ;;
+			3) return 0 ;;
+		esac
+	done
+}
+
+case "${1:---menu}" in
+	--apply) apply ;;
+	--menu)  menu ;;
+	*) printf 'usage: moonlight-input [--apply|--menu]\n' >&2; exit 2 ;;
+esac

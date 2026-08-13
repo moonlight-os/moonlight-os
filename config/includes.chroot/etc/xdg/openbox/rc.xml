@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Moonlight OS: openbox exists so Moonlight's fullscreen request has
+     someone to talk to, and so Ctrl+Alt+M can put the settings panel on
+     screen over the top of it.  No decorations, one desktop, nothing else. -->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <theme>
+    <keepBorder>no</keepBorder>
+    <animateIconify>no</animateIconify>
+  </theme>
+  <desktops>
+    <number>1</number>
+    <names><name>Moonlight</name></names>
+  </desktops>
+
+  <keyboard>
+    <!-- Ctrl+Alt+M is deliberately NOT bound here.  While a stream is running
+         Moonlight grabs the X keyboard and the window manager sees nothing at
+         all, so that combination is handled by triggerhappy reading
+         /dev/input instead, which a grab cannot hide from.  Binding it in
+         both places would just race the two against each other.
+
+         This one is the fallback for when that daemon is not running. -->
+    <keybind key="C-A-F12">
+      <action name="Execute">
+        <command>/usr/local/bin/moonlight-panel</command>
+      </action>
+    </keybind>
+  </keyboard>
+
+  <!-- openbox defines no mouse bindings at all when this section is missing,
+       which means clicking a window would not focus it. Fine for a single
+       fullscreen app, not fine once there is a browser and a terminal. -->
+  <mouse>
+    <context name="Frame">
+      <mousebind button="A-Left" action="Press">
+        <action name="Focus"/><action name="Raise"/>
+      </mousebind>
+    </context>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/><action name="Raise"/>
+      </mousebind>
+      <mousebind button="Middle" action="Press">
+        <action name="Focus"/><action name="Raise"/>
+      </mousebind>
+      <mousebind button="Right" action="Press">
+        <action name="Focus"/><action name="Raise"/>
+      </mousebind>
+    </context>
+  </mouse>
+
+  <!-- Order matters: openbox applies every matching rule in turn, so the
+       catch-all has to come first and the specific ones after it, or the
+       catch-all wins. -->
+  <applications>
+    <application class="*">
+      <decor>no</decor>
+      <!-- Deliberately NOT maximized.  Forcing maximize here also lands on
+           the stream window, and a maximize/fullscreen state conflict is a
+           prime suspect for a black stream.  A slightly letterboxed launcher
+           is a fair price for the stream itself being reliable. -->
+    </application>
+
+    <!-- Moonlight is fullscreen, and openbox keeps a focused fullscreen
+         window above everything else.  The panel asks for the layer above so
+         it comes out in front the moment it takes focus. -->
+    <application class="moonlight-panel">
+      <decor>no</decor>
+      <focus>yes</focus>
+      <layer>above</layer>
+    </application>
+
+  </applications>
+</openbox_config>

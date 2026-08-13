@@ -1,0 +1,174 @@
+#!/bin/sh
+# Point the touchscreen at the right corner of the screen.
+#
+#   moonlight-touch --apply    map every touchscreen onto its output
+#   moonlight-touch --show     what it would set, and why
+#
+# Rotating a screen with xrandr does not rotate the touchscreen with it.  The
+# panel keeps reporting where a finger landed in its own coordinates -- on a
+# tablet whose panel is physically portrait and running rotated, that is 90
+# degrees away from where the picture is, so the pointer runs off at right
+# angles to the finger.  Nothing in X fixes this by itself: the transform is a
+# property somebody has to set.
+#
+# So this is called after every layout change, from moonlight-displays
+# --apply, which is also what the hotplug watcher and the session start-up
+# path go through.  The matrix lives in the X server and dies with it, which
+# is why it is reapplied rather than written to a config file.
+#
+# Devices are found through udev's ID_INPUT_TOUCHSCREEN rather than by name.
+# Matching on names looked tempting -- until a real machine turned up with
+# "FTSC1000:00 2808:1015" and "FTSC1000:00 2808:1015 UNKNOWN", one a
+# touchscreen and one not, and setting the property on the wrong one is a
+# BadMatch and an X error on the console.
+#
+# shellcheck source=./moonlight-common
+. /usr/local/bin/moonlight-common
+
+[ -n "${DISPLAY:-}" ] || exit 0
+command -v xinput >/dev/null 2>&1 || exit 0
+
+# Total screen, as X sees it with everything composed together.
+screen_size() {
+	xrandr --query 2>/dev/null \
+		| sed -n 's/^Screen 0:.*current \([0-9]*\) x \([0-9]*\).*/\1 \2/p' | head -1
+}
+
+# "OUTPUT WxH+X+Y ROTATION" per connected output.
+#
+# xrandr omits the rotation word entirely when it is normal, so the field
+# after the geometry is either a rotation or the start of the "(normal left
+# inverted right ...)" capability list.
+outputs() {
+	xrandr --query 2>/dev/null | awk '
+		/ connected/ && !/disconnected/ {
+			geom = ""; rot = "normal"
+			for (i = 2; i <= NF; i++) {
+				if ($i ~ /^[0-9]+x[0-9]+\+-?[0-9]+\+-?[0-9]+$/) {
+					geom = $i
+					if ((i + 1) <= NF && $(i + 1) ~ /^(left|right|inverted)$/)
+						rot = $(i + 1)
+					break
+				}
+			}
+			if (geom != "") print $1, geom, rot
+		}'
+}
+
+# Which output a touchscreen belongs to.
+#
+# A touchscreen is glued to a panel, and the panel is the built-in one --
+# nobody carries a second touch monitor to a machine like this.  So an
+# internal output wins outright; failing that the primary, which on a
+# single-screen machine is the same answer anyway.
+touch_output() {
+	all="$(outputs)"
+	[ -n "$all" ] || return 1
+
+	internal=$(printf '%s\n' "$all" | awk '$1 ~ /^(DSI|eDP|LVDS)/ {print; exit}')
+	if [ -n "$internal" ]; then
+		printf '%s' "$internal"
+		return 0
+	fi
+
+	prim=$(xrandr --query 2>/dev/null | awk '/ connected primary/ {print $1; exit}')
+	if [ -n "$prim" ]; then
+		line=$(printf '%s\n' "$all" | awk -v p="$prim" '$1 == p {print; exit}')
+		[ -n "$line" ] && { printf '%s' "$line"; return 0; }
+	fi
+
+	printf '%s\n' "$all" | head -1
+}
+
+# Every xinput device that udev calls a touchscreen, as numeric ids.
+touch_devices() {
+	xinput list --id-only 2>/dev/null | while read -r id; do
+		[ -n "$id" ] || continue
+		node=$(xinput list-props "$id" 2>/dev/null \
+			| sed -n 's/.*Device Node ([0-9]*):[[:space:]]*"\(.*\)"/\1/p' | head -1)
+		[ -n "$node" ] || continue
+		[ -e "$node" ] || continue
+		if udevadm info --query=property --name="$node" 2>/dev/null \
+			| grep -q '^ID_INPUT_TOUCHSCREEN=1$'; then
+			printf '%s\n' "$id"
+		fi
+	done
+}
+
+# The matrix is the output's share of the whole screen, composed with the
+# rotation.  On a single screen the first part is the identity and this
+# reduces to the plain rotation matrix; with two screens it also keeps the
+# touchscreen inside its own panel instead of spanning both.
+matrix_for() {
+	geom="$1"; rot="$2"; sw="$3"; sh="$4"
+	printf '%s %s %s %s' "$geom" "$rot" "$sw" "$sh" | awk '
+		{
+			split($1, g, /[x+]/)
+			w = g[1]; h = g[2]; x = g[3]; y = g[4]
+			rot = $2; W = $3; H = $4
+
+			if (rot == "left")          { a=0; b=-1; c=1; d=1;  e=0;  f=0 }
+			else if (rot == "right")    { a=0; b=1;  c=0; d=-1; e=0;  f=1 }
+			else if (rot == "inverted") { a=-1;b=0;  c=1; d=0;  e=-1; f=1 }
+			else                        { a=1; b=0;  c=0; d=0;  e=1;  f=0 }
+
+			if (W <= 0 || H <= 0) { W = w; H = h }
+			rw = w / W; rh = h / H; ox = x / W; oy = y / H
+
+			printf "%.6f %.6f %.6f %.6f %.6f %.6f 0 0 1",
+				rw*a, rw*b, rw*c + ox,
+				rh*d, rh*e, rh*f + oy
+		}'
+}
+
+apply() {
+	set -- $(screen_size)
+	sw="${1:-0}"; sh="${2:-0}"
+
+	line="$(touch_output)" || return 0
+	[ -n "$line" ] || return 0
+	out=$(printf '%s' "$line" | awk '{print $1}')
+	geom=$(printf '%s' "$line" | awk '{print $2}')
+	rot=$(printf '%s' "$line" | awk '{print $3}')
+
+	m="$(matrix_for "$geom" "$rot" "$sw" "$sh")"
+	[ -n "$m" ] || return 0
+
+	found=0
+	for id in $(touch_devices); do
+		found=1
+		if [ "${1:-}" = "--show" ]; then
+			continue
+		fi
+		# shellcheck disable=SC2086
+		xinput set-prop "$id" "Coordinate Transformation Matrix" $m 2>/dev/null || true
+	done
+
+	MLOS_TOUCH_OUT="$out"
+	MLOS_TOUCH_ROT="$rot"
+	MLOS_TOUCH_MATRIX="$m"
+	MLOS_TOUCH_FOUND="$found"
+}
+
+case "${1:---apply}" in
+	--apply)
+		apply
+		;;
+	--show)
+		apply
+		if [ "${MLOS_TOUCH_FOUND:-0}" = "0" ]; then
+			echo "No touchscreen on this machine."
+		else
+			echo "touchscreen -> $MLOS_TOUCH_OUT, rotated $MLOS_TOUCH_ROT"
+			echo "matrix: $MLOS_TOUCH_MATRIX"
+			for id in $(touch_devices); do
+				name=$(xinput list --name-only "$id" 2>/dev/null)
+				echo "  id $id  $name"
+			done
+		fi
+		;;
+	*)
+		echo "usage: moonlight-touch [--apply|--show]" >&2
+		exit 2
+		;;
+esac
