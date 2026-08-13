@@ -5,6 +5,7 @@ name: host-utils
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'host-utils/**'
       - '.github/workflows/host-utils.yml'
@@ -21,6 +22,9 @@ defaults:
 env:
   # Matches GO_IMAGE in build.sh, so CI and the ISO build use one toolchain.
   GO_VERSION: '1.24'
+
+permissions:
+  contents: write   # needed only when attaching tag builds to a release
 
 jobs:
   test:
@@ -84,3 +88,14 @@ jobs:
           path: host-utils/dist/
           retention-days: 30
           if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --generate-notes --title "$tag"
+          gh release upload "$tag" \
+            dist/moonlight-os-host-utils-* dist/SHA256SUMS --clobber
