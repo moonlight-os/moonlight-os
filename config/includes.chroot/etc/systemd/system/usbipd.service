@@ -1,5 +1,5 @@
 [Unit]
-Description=USB/IP host daemon (device passthrough to the gaming PC)
+Description=USB/IP host daemon (device passthrough to the host PC)
 After=network.target
 
 [Service]

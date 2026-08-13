@@ -15,8 +15,16 @@
 CONF=/etc/X11/xorg.conf.d/40-touchpad.conf
 
 # Persisted for the next X server; libinput reads this at device add time.
+#
+# DisableWhileTyping is off deliberately, and it is not a preference.
+# libinput mutes a touchpad for a moment after every keystroke so a palm
+# brushing the pad while you type prose does not move the cursor.  That is the
+# right default for a laptop and the wrong one here: holding a movement key is
+# not typing, so in a game the pad is muted for as long as you are moving, and
+# the trackpad appears simply dead.  The symptom is easy to misread, because
+# the pad works perfectly until the moment you touch a key.
 write_conf() {
-	printf 'Section "InputClass"\n\tIdentifier "moonlight-os touchpad"\n\tMatchIsTouchpad "on"\n\tDriver "libinput"\n\tOption "NaturalScrolling" "%s"\nEndSection\n' "$1" \
+	printf 'Section "InputClass"\n\tIdentifier "moonlight-os touchpad"\n\tMatchIsTouchpad "on"\n\tDriver "libinput"\n\tOption "NaturalScrolling" "%s"\n\tOption "DisableWhileTyping" "off"\nEndSection\n' "$1" \
 		| mlos_root tee "$CONF" >/dev/null
 }
 
@@ -28,6 +36,10 @@ apply_live() {
 		case "$dev" in
 			*[Tt]ouch[Pp]ad*|*[Tt]ouchpad*)
 				xinput set-prop "$dev" "libinput Natural Scrolling Enabled" "$1" \
+					>/dev/null 2>&1 || true
+				# See write_conf: the pad must keep working while a key
+				# is held down.
+				xinput set-prop "$dev" "libinput Disable While Typing Enabled" 0 \
 					>/dev/null 2>&1 || true
 				;;
 		esac

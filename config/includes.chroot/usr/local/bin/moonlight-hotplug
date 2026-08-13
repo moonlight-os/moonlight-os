@@ -14,8 +14,25 @@ INTERVAL="${MLOS_HOTPLUG_INTERVAL:-2}"
 
 # Just the names and their connected/disconnected state -- resolution changes
 # made from the menu must not look like a hotplug and start a loop.
+#
+# --current is load-bearing, not a micro-optimisation.  A plain "xrandr
+# --query" asks the server to re-probe every connector, which means a DDC
+# transaction per output; on a machine with one panel and six dead DP/HDMI
+# connectors those six all have to time out before the call returns.  The X
+# server is single-threaded, so that is the whole display frozen -- measured
+# at 200 ms per call on the Miix, once every INTERVAL seconds, for as long as
+# the session is up.  During a stream that reads as a regular half-second
+# stutter every few seconds, and it looks exactly like a network fault, which
+# is where the hunt for it started.
+#
+# --current reads the state the server already holds instead of re-probing
+# (XRRGetScreenResourcesCurrent rather than XRRGetScreenResources): 33x
+# cheaper here, 3 jiffies against 100 for the same five calls.  It still sees
+# hotplugs, because it is not the polling that discovers them -- the kernel
+# raises a DRM uevent, the modesetting driver handles it and updates the
+# server's own view, and this loop is only here to notice that it changed.
 state() {
-	xrandr --query 2>/dev/null \
+	xrandr --query --current 2>/dev/null \
 		| awk '/ connected| disconnected/ {print $1, $2}'
 }
 

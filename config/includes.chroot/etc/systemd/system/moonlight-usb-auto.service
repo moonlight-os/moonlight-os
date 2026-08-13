@@ -7,7 +7,7 @@ Wants=network-online.target usbipd.service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/moonlight-usb-auto
-# On the way out it unbinds every device it shared and tells the gaming PC to
+# On the way out it unbinds every device it shared and tells the host PC to
 # let go, which is two round trips on a machine that is probably shutting
 # down.  Give it room rather than leaving a wheel attached to nothing.
 TimeoutStopSec=20
