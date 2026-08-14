@@ -57,6 +57,37 @@ func findTool() (Tool, bool) {
 
 func needsReboot() bool { return false }
 
+// isPackagedLocation reports whether a package manager owns this binary.
+//
+// /usr/local/bin is deliberately not in the list: that is where *we* install,
+// and no package manager may write there, so a binary found in it is our own
+// copy rather than someone else's file.  /nix/store is the emphatic case --
+// it is read-only, so the question is not manners but whether the copy can
+// happen at all.
+func isPackagedLocation(p string) bool {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	for _, dir := range []string{"/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/nix/store/", "/snap/", "/var/lib/flatpak/"} {
+		if strings.HasPrefix(abs, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// onNixOS matters because the two things install does for a distribution --
+// fetch a package and drop a systemd unit in /etc -- are both things NixOS
+// does from its configuration instead, and doing them imperatively there
+// produces a machine whose next rebuild silently undoes half of this.
+func onNixOS() bool {
+	if _, err := os.Stat("/etc/NIXOS"); err == nil {
+		return true
+	}
+	return false
+}
+
 // ensureOnPath has nothing to do here: installedExePath() is already in
 // /usr/local/bin, which is on the default PATH of every distribution this
 // runs on.  It exists so the install flow is one shape on both platforms --
@@ -66,6 +97,9 @@ func needsReboot() bool { return false }
 // taken *off* its PATH, because then the command genuinely will not be found
 // and the reason is nothing to do with this program.
 func ensureOnPath(exe string) ([]string, error) {
+	if isPackagedLocation(exe) {
+		return nil, nil // the package manager put it on PATH already
+	}
 	dir := filepath.Dir(exe)
 	for _, e := range filepath.SplitList(os.Getenv("PATH")) {
 		if strings.TrimRight(e, "/") == strings.TrimRight(dir, "/") {
@@ -186,6 +220,11 @@ func installUSBIPPackage() ([]string, error) {
 		{"apk", [][]string{{"add", "usbip-tools"}}},
 	}
 
+	if onNixOS() {
+		return nil, fmt.Errorf("this is NixOS, where packages come from the configuration -- " +
+			"add `services.mlos-host-utils.enable = true;` to configuration.nix and rebuild")
+	}
+
 	for _, m := range mgrs {
 		if _, err := exec.LookPath(m.bin); err != nil {
 			continue
@@ -209,6 +248,16 @@ func installUSBIPPackage() ([]string, error) {
 }
 
 func installService(exe string, port int) ([]string, error) {
+	// A unit written into /etc/systemd/system on NixOS works right up until
+	// the next `nixos-rebuild switch`, which is not a failure anyone connects
+	// to having run this months earlier.  Better to not write it at all and
+	// say where the switch actually is.
+	if onNixOS() {
+		return nil, fmt.Errorf("this is NixOS: a unit written to %s would not survive the next "+
+			"nixos-rebuild.\nSet `services.mlos-host-utils.enable = true;` in configuration.nix "+
+			"instead -- it does everything this command does, declaratively", serviceUnit)
+	}
+
 	unit := fmt.Sprintf(`[Unit]
 Description=Moonlight OS host utils (USB/IP passthrough agent)
 Documentation=https://github.com/MopigamesYT/moonlight-os

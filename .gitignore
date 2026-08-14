@@ -50,3 +50,7 @@
 *.part
 *.swp
 .DS_Store
+
+# nix build drops a symlink to the store here
+/result
+/result-*

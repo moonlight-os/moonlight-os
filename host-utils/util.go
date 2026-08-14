@@ -73,8 +73,21 @@ func exePath() string {
 // pointing there forever.  It works until the folder is tidied up, and then
 // the agent silently stops coming back after a reboot, which is exactly the
 // failure nobody attributes to the right cause.
+//
+// A binary a package manager put there is the one case where copying is the
+// wrong answer, and it is not a rare one: pacman, nix and winget all install
+// to a location that is already permanent, and all three own the file.
+// Copying it to our own directory would give the machine two binaries, with
+// the service pointing at the copy -- so `pacman -Syu` or `winget upgrade`
+// would update a file nothing runs, and the agent would sit at the old
+// version forever with nothing to suggest why.
 func installBinary() (string, []string, error) {
 	src := exePath()
+
+	if isPackagedLocation(src) {
+		return src, []string{"already installed at " + src + ", leaving it to the package manager"}, nil
+	}
+
 	target := installedExePath()
 
 	if a, err := os.Stat(src); err == nil {

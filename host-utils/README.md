@@ -37,8 +37,23 @@ users run:
 ### Linux
 
 ```sh
-sudo ./mlos-host-utils-linux-amd64 install
+paru -S mlos-host-utils          # Arch, from the AUR
+sudo mlos-host-utils install
 ```
+
+```sh
+sudo ./mlos-host-utils-linux-amd64 install   # anywhere else, from the release
+```
+
+On **NixOS**, don't run `install` — it writes a unit and fetches a package,
+and a rebuild takes both back. Use the module instead:
+
+```nix
+imports = [ inputs.moonlight-os.nixosModules.default ];
+services.mlos-host-utils.enable = true;
+```
+
+then `mlos-host-utils pair` for the code. See [`packaging/nix`](../packaging/nix).
 
 That one command:
 

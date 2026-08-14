@@ -70,15 +70,16 @@ pair_menu() {
 "On the host PC, install mlos-host-utils and run it once:
 
   Windows   winget install MopigamesYT.MlosHostUtils
-            then, in an Administrator terminal:
-            mlos-host-utils install
-
+            then  mlos-host-utils install  as Administrator.
             Or download the .exe and double-click it -- it
             walks you through the same thing.
 
+  Arch      paru -S mlos-host-utils
+            then  sudo mlos-host-utils install
+
   Linux     sudo ./mlos-host-utils-linux-amd64 install
 
-It prints an address and a four-group code.  Type those in next." 20 74 || return 1
+It prints an address and a four-group code.  Type those in next." 21 74 || return 1
 
 	addr=$(whiptail --title "Host PC address" --inputbox \
 "Address of the host PC, as mlos-host-utils printed it.

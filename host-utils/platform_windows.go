@@ -96,6 +96,24 @@ func installedExePath() string {
 	return filepath.Join(dir, "mlos-host-utils", "mlos-host-utils.exe")
 }
 
+// isPackagedLocation reports whether winget owns this binary.  A portable
+// winget package is unpacked under %LOCALAPPDATA%\Microsoft\WinGet\Packages
+// and reached through a shim in the sibling Links directory, which is on
+// PATH -- so the file is already permanent, already reachable, and already
+// something `winget upgrade` expects to be the one in use.
+func isPackagedLocation(p string) bool {
+	local := os.Getenv("LOCALAPPDATA")
+	if local == "" {
+		return false
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return false
+	}
+	root := filepath.Join(local, "Microsoft", "WinGet") + string(filepath.Separator)
+	return strings.HasPrefix(strings.ToLower(abs), strings.ToLower(root))
+}
+
 // ---------------------------------------------------------------- PATH ----
 
 // The machine PATH lives in the registry, and it is edited there rather than
@@ -167,6 +185,11 @@ func writeSystemPath(value, kind string) error {
 // `mlos-host-utils status` works in a terminal the way it does on Linux --
 // where /usr/local/bin has already answered this question.
 func ensureOnPath(exe string) ([]string, error) {
+	if isPackagedLocation(exe) {
+		// winget's own Links directory is on PATH and holds the shim; the
+		// package directory this binary actually lives in is not meant to be.
+		return nil, nil
+	}
 	dir := filepath.Dir(exe)
 	value, kind, err := readSystemPath()
 	if err != nil {
