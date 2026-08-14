@@ -14,14 +14,19 @@
 
 buildGoModule (finalAttrs: {
   pname = "mlos-host-utils";
-  version = "0.1.2";
+  version = "0.1.3";
 
   src = fetchFromGitHub {
     owner = "MopigamesYT";
     repo = "moonlight-os";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-kP+jFjq1Z3AYy1IRWAD2DlOWsYWPoaGNHQaUhnYiSFM=";
+    hash = "sha256-TZDaNAV+v7reKiBllkbESQ1/n1ItGKFDNGMUcuNcXcM=";
   };
+
+  # nixpkgs-vet fails a new package without this, and it is where nixpkgs is
+  # going anyway: the builder gets the attributes as real data structures
+  # rather than as shell-mangled strings.
+  __structuredAttrs = true;
 
   # The agent is one directory of a repository that is otherwise an ISO
   # build, so the Go module is not at the root.

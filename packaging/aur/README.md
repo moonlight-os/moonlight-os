@@ -50,14 +50,24 @@ an SSH key added to the AUR account under
 it the job still builds and attaches the recipe to the run, so a release is
 never blocked on it.
 
-The first push is the one that creates the package, and the AUR only accepts
-it if the account is the maintainer. For a package that has never existed,
-push once by hand:
+Pushing to a package name that does not exist yet is how a package is
+created on the AUR, so the job can do the first release as well as the rest
+— nothing has to be set up over there first, as long as the name is free.
+
+To do that first one by hand instead, and look at it before it is public:
 
 ```sh
-git clone ssh://aur@aur.archlinux.org/mlos-host-utils.git
+git clone ssh://aur@aur.archlinux.org/mlos-host-utils.git   # empty repo
 cp build/PKGBUILD build/.SRCINFO mlos-host-utils/
 cd mlos-host-utils && git add -A && git commit -m 0.1.3 && git push
 ```
 
-After that the job takes over.
+## ssh in a container job
+
+The push step passes the key and known_hosts to ssh with
+`GIT_SSH_COMMAND` rather than writing them to `~/.ssh`, and that is not
+stylistic. In a container job the runner sets `HOME=/github/home`, but ssh
+expands `~` from `/etc/passwd`, which for root is `/root`. Anything written
+to `~/.ssh` is then in a directory ssh never reads, and the only symptom is
+`Host key verification failed` against a host whose key is pinned three
+lines above.
