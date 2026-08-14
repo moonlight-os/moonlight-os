@@ -2,7 +2,12 @@
 # Moonlight OS boot flow.  Started from ~/.bash_profile on tty1 after
 # autologin.  Owns the whole lifetime of the appliance:
 #
-#   network up? -> start X -> Moonlight -> (Moonlight exits) -> menu -> repeat
+#   install or try it? -> keyboard -> network up? -> start X -> Moonlight
+#     -> (Moonlight exits) -> menu -> repeat
+#
+# The first step only happens on a live boot, and only once per boot.  It is
+# first because installing needs none of the steps after it, and answering
+# them anyway means answering them twice -- see moonlight-welcome.
 #
 # shellcheck source=./moonlight-common
 . /usr/local/bin/moonlight-common
@@ -18,14 +23,18 @@ printf '\n  Moonlight OS -- starting up\n\n'
 while :; do
 	mlos_load
 
-	# 1. Keyboard and clock, once.  Must come before anything asks the user
+	# 1. Live boot only, once: install this, or try it from the stick?
+	#    Nothing below is needed to install, so nothing below runs first.
+	moonlight-welcome
+
+	# 2. Keyboard and clock, once.  Must come before anything asks the user
 	#    to type: on a non-US layout the Wi-Fi password would be wrong.
 	moonlight-region --first-run
 
-	# 2. Network.  Prompts for Wi-Fi only when nothing is connected.
+	# 3. Network.  Prompts for Wi-Fi only when nothing is connected.
 	moonlight-netsetup --ensure
 
-	# 3. Graphical session.  Blocks until Moonlight exits.
+	# 4. Graphical session.  Blocks until Moonlight exits.
 	#    The hint is the only place the panel key is advertised, and the
 	#    panel is the only route to the installer once Moonlight has the
 	#    screen -- so it gets its own pause rather than scrolling past.
@@ -46,6 +55,6 @@ while :; do
 		fi
 	fi
 
-	# 4. Moonlight exited -- offer the maintenance menu.
+	# 5. Moonlight exited -- offer the maintenance menu.
 	moonlight-menu || true
 done

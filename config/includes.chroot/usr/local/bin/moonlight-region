@@ -2,6 +2,7 @@
 # Keyboard layout and time zone.
 #
 #   moonlight-region --first-run   run once, before anything asks for typing
+#   moonlight-region --keyboard    just the layout, without the clock or the flag
 #   moonlight-region --menu        change it later
 #   moonlight-region --apply-x     apply the layout to a running X server
 #
@@ -223,6 +224,13 @@ case "${1:---menu}" in
 		timezone_menu || true
 		mlos_root touch "$FIRSTRUN_FLAG" 2>/dev/null || true
 		;;
+	--keyboard)
+		# The layout on its own, for the welcome screen: somebody about to
+		# type ERASE into the installer needs the right keys and nothing
+		# else.  Deliberately does not set the first-run flag -- whether the
+		# wizard still owes them a time zone is a separate question.
+		keyboard_menu || true
+		;;
 	--menu)
 		while :; do
 			mlos_load
@@ -253,7 +261,7 @@ Clock: $(date '+%Y-%m-%d %H:%M')" 18 74 3 \
 		fi
 		;;
 	*)
-		printf 'usage: moonlight-region [--first-run|--menu|--apply-x]\n' >&2
+		printf 'usage: moonlight-region [--first-run|--keyboard|--menu|--apply-x]\n' >&2
 		exit 2
 		;;
 esac

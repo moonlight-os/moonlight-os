@@ -9,10 +9,16 @@ at you.
 
 ```
 power on
+   -> install, or try it?       (live USB only, once per boot)
    -> keyboard + time zone      (first boot only)
    -> Wi-Fi                     (only if nothing is connected)
    -> Moonlight, fullscreen
 ```
+
+Booting the USB stick asks whether to install before it asks anything else.
+Installing needs no network and no setup first, so nothing that only the live
+session cares about is answered on the way to it — and if the machine already
+has Moonlight OS on it, the installer brings the old answers across anyway.
 
 **Ctrl+Alt+M opens the settings menu at any time**, on top of a running
 stream. Everything lives there: Wi-Fi, Tailscale, displays, USB passthrough,
@@ -147,11 +153,17 @@ hardware with an Intel or AMD GPU.
 
 ## Install to an internal disk
 
-Live USB is fine forever, but if you want it on the machine's own drive:
-Ctrl+Alt+M → **System** → **Install to this computer**. It wipes the chosen
-disk, copies the system over, and installs GRUB for both UEFI and BIOS. The USB
-stick you booted from is excluded from the disk list so you can't overwrite it
-mid-install.
+Live USB is fine forever, but if you want it on the machine's own drive, the
+welcome screen offers it as the first thing a live boot asks — nothing else
+has to be answered to get there. Later on it is Ctrl+Alt+M → **System** →
+**Install to this computer**. Either way it wipes the chosen disk, copies the
+system over, and installs GRUB for both UEFI and BIOS. The USB stick you booted
+from is excluded from the disk list so you can't overwrite it mid-install.
+
+Confirming the erase means typing a word, which needs the right keys, so the
+welcome screen has a keyboard-layout entry alongside the other two. Everything
+else on that screen works with the arrow keys, which is why it can come before
+the layout has been chosen at all.
 
 If you'd rather keep running from USB, use **System** → **Save settings to
 this USB stick** instead — that adds a persistence partition in the stick's
@@ -530,24 +542,71 @@ never gets mistaken for the machine's own.
 
 A new ISO means reinstalling, and reinstalling wipes the disk. The installer
 handles that itself: before it erases anything it looks for an existing
-Moonlight OS on the target, offers to carry its settings over, and puts them
-back into the fresh system afterwards. A `moonlight-os-settings-*.tar.gz` left
-on the boot medium is picked up the same way.
+Moonlight OS, offers to carry its settings over, and puts them back into the
+fresh system afterwards. It looks on every disk, not just the one being
+erased — moving from an old drive to a new NVMe is exactly the case where
+losing everything hurts most, and there the old system is sitting somewhere
+the installer was never going to touch. Failing that, a
+`moonlight-os-settings-*.tar.gz` on any plugged-in medium is offered instead.
 
-**Back up / restore settings** does it by hand, to a USB stick. What travels:
+Before the disk goes, and again when it is done, it says what it found:
+
+```
+Taken from /dev/sda3:
+
+  Moonlight pairing and settings
+  Wi-Fi and network: 3 saved connection(s)
+  Tailscale login
+  Bluetooth: 2 paired device(s)
+  Displays, picture quality, sound, USB passthrough
+  Keyboard layout and time zone
+  SSH host keys and authorised keys
+  The SSH account password
+
+Carry all of this over?
+```
+
+If the old settings cannot be read, it says so and asks before continuing
+rather than quietly installing a system with none of them in it.
+
+**Back up / restore settings** does the same thing by hand, to a USB stick.
+What travels:
 
 | | |
 | --- | --- |
 | Moonlight | client certificate, paired hosts, all its settings |
 | Moonlight OS | `moonlight-os.conf`: displays, quality, audio, auto-connect, USB passthrough pairing |
-| Network | Wi-Fi passwords, Tailscale login, SSH host keys and authorised keys |
-| Devices | Bluetooth pairings, keyboard layout, trackpad, volume |
+| Network | Wi-Fi passwords, Tailscale login, machine name, SSH host keys, authorised keys, the account password |
+| Devices | Bluetooth pairings, keyboard layout, time zone, trackpad, volume |
 
 SSH host keys are in there on purpose: without them every reinstall makes your
 client complain about a changed fingerprint. The USB pairing code is in there
 too, and it is a credential — anyone holding it can plug USB devices into your
 host PC over the network, so the backup stick deserves the same care as the
 machine.
+
+Three things make this a merge rather than an overwrite, because a plain
+restore quietly loses each of them:
+
+* **`moonlight-os.conf`.** An archive written by an older Moonlight OS has
+  none of the keys added since. Dropped on top of the shipped file it takes
+  their defaults and their documentation with it, and the newer settings then
+  read as missing even though nobody ever changed them. So the shipped file
+  stays as the template and only the values move across; a key the image no
+  longer ships is appended rather than dropped.
+* **`authorized_keys`.** The image carries whoever built it; the archive
+  carries whoever the machine trusted. Either one replacing the other locks
+  somebody out, so both survive.
+* **Wi-Fi connections** are separate files, so they merge on their own.
+
+And three settings are not finished when their file is in place. `/etc/timezone`
+is the answer but `/etc/localtime` is what everything actually reads, so the
+symlink is repointed; console-setup's cached keymap is deleted so the console
+comes back on the layout that just arrived rather than the previous one; and
+the account password is spliced back into an `/etc/shadow` that otherwise
+belongs to the image — without it a reinstall comes back saying password
+logins are on, which is a config file and does travel, while the password
+itself is gone.
 
 ## Artwork
 
@@ -747,7 +806,8 @@ The scripts are POSIX `sh` and readable in one sitting:
 
 | Script                | Role                                              |
 | --------------------- | ------------------------------------------------- |
-| `moonlight-session`   | boot flow: region → network → X → menu → repeat   |
+| `moonlight-session`   | boot flow: welcome → region → network → X → menu  |
+| `moonlight-welcome`   | live boot's first question: install, or try it?   |
 | `moonlight-xsession`  | the X client: layout, keymap, WM, then Moonlight  |
 | `moonlight-panel`     | Ctrl+Alt+M: the menu in a terminal over the stream|
 | `moonlight-netsetup`  | Wi-Fi wizard                                      |

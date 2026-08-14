@@ -6,6 +6,8 @@
 #   moonlight-backup --save-from <root> <dir>  read them out of another root
 #   moonlight-backup --restore-to <root> <f>   write them into another root
 #   moonlight-backup --list                    what would be saved
+#   moonlight-backup --summary <file>          what is in an archive, in English
+#   moonlight-backup --find                    archives on any plugged-in medium
 #   moonlight-backup --menu                    the interactive version
 #
 # The two "other root" forms are what lets the installer carry your settings
@@ -21,14 +23,22 @@
 
 # Everything here is either something you typed or something a daemon
 # generated that identifies this machine.  Nothing that the image provides.
+#
+# Whole directories rather than the files inside them wherever the contents
+# are all ours: a drop-in added by hand, or by a version of this system newer
+# than the one that wrote the archive, then travels without anybody having to
+# remember to add it here.
 PATHS="
-/etc/moonlight-os/moonlight-os.conf
+/etc/moonlight-os
 /etc/NetworkManager/system-connections
-/etc/X11/xorg.conf.d/00-keyboard.conf
-/etc/X11/xorg.conf.d/40-touchpad.conf
+/etc/X11/xorg.conf.d
+/etc/ssh/sshd_config.d
 /etc/default/keyboard
 /etc/timezone
-/etc/ssh/sshd_config.d/10-moonlight-os.conf
+/etc/localtime
+/etc/adjtime
+/etc/hostname
+/etc/hosts
 /var/lib/tailscale
 /var/lib/bluetooth
 /home/moonlight/.ssh/authorized_keys
@@ -39,6 +49,12 @@ QT_DIRS="
 /home/moonlight/.config/Moonlight Game Streaming Project
 /home/moonlight/.config/fastfetch
 "
+
+# Things that are settings but are not files of their own -- a line inside a
+# file the rest of which belongs to the image.  They are staged into this
+# directory, ride along in the archive, and are applied and deleted on the way
+# back in.  See stage_extras / apply_extras.
+CARRIED=var/lib/moonlight-os/carried
 
 STAMP="moonlight-os-settings-$(date +%Y%m%d-%H%M%S).tar.gz"
 
@@ -58,6 +74,29 @@ existing() {
 	for k in "$ROOT"/etc/ssh/ssh_host_*; do
 		[ -e "$k" ] && printf '%s\n' "${k#"$ROOT"/}"
 	done
+}
+
+# ---------------------------------------------------------------- staging ---
+
+# The account password.  /etc/shadow cannot travel whole -- it also holds root
+# and every system account, and those belong to the image rather than to you --
+# but without the one line the SSH menu comes back from a reinstall saying
+# password logins are on (that part is a config file, and it does travel) while
+# the password itself is gone.  Just the hash goes.
+stage_extras() {
+	dir="$1"
+	mkdir -p "$dir/$CARRIED" || return 1
+
+	hash=$(mlos_root awk -F: '$1 == "moonlight" {print $2}' \
+		"${ROOT:-}/etc/shadow" 2>/dev/null)
+	# "!" and "*" are "no password set", which is the image default and not
+	# worth carrying; a real crypt hash always starts with "$".
+	case "$hash" in
+		'$'*) printf '%s\n' "$hash" > "$dir/$CARRIED/shadow" ;;
+	esac
+
+	chmod -R go-rwx "$dir/$CARRIED" 2>/dev/null || true
+	return 0
 }
 
 # Somewhere removable, or the current directory as a fallback.
@@ -90,15 +129,35 @@ do_save() {
 	# kernel's fs.protected_regular refuses to open someone else's file for
 	# writing -- and it refuses root too, so the installer saving over a
 	# backup you made yourself would fail with a bare "permission denied".
-	mlos_root rm -f "$out"
+	mlos_root rm -f "$out" "$out.part"
+
+	# Built uncompressed first so the staged extras can be appended: tar can
+	# only add members to an archive it is not compressing on the fly, and
+	# they live outside ROOT, which -T cannot reach in the same pass.
+	stage=$(mktemp -d)
+	stage_extras "$stage" || true
 
 	err=$(mktemp)
-	if ! mlos_root tar czf "$out" -C "${ROOT:-/}" -T "$list" 2>"$err"; then
+	if ! mlos_root tar cf "$out.part" -C "${ROOT:-/}" -T "$list" 2>"$err"; then
 		printf 'could not write %s\n' "$out" >&2
 		sed 's/^/  tar: /' "$err" >&2
+		rm -rf "$list" "$err" "$stage"
+		mlos_root rm -f "$out.part"
+		return 1
+	fi
+	if [ -d "$stage/$CARRIED" ]; then
+		mlos_root tar rf "$out.part" -C "$stage" "$CARRIED" 2>>"$err" || true
+	fi
+	rm -rf "$stage"
+
+	if ! mlos_root sh -c 'gzip -c "$1" > "$2"' _ "$out.part" "$out" 2>>"$err"; then
+		printf 'could not write %s\n' "$out" >&2
+		sed 's/^/  gzip: /' "$err" >&2
+		mlos_root rm -f "$out.part" "$out"
 		rm -f "$list" "$err"
 		return 1
 	fi
+	mlos_root rm -f "$out.part"
 	rm -f "$err"
 	mlos_root chmod 0600 "$out"
 	[ "$(id -u)" = "0" ] || mlos_root chown "$(id -u):$(id -g)" "$out"
@@ -106,10 +165,158 @@ do_save() {
 	printf '%s\n' "$out"
 }
 
+# ------------------------------------------------------------- merging in ---
+
+# The config file is the one place where a straight overwrite loses something.
+# An archive written by an older Moonlight OS has none of the keys added since,
+# and dropping it whole on top of the shipped file takes their defaults and
+# their documentation away with it -- the new settings then read as "missing"
+# even though nobody ever changed them.
+#
+# So the shipped file stays as the template and only the values move: every key
+# the old file set is written into it, and anything it had that the image no
+# longer ships is appended under a note rather than thrown away.
+merge_conf() {
+	old="$1"      # the file that came out of the archive
+	new="$2"      # the one the image shipped
+	[ -s "$old" ] && [ -s "$new" ] || return 1
+	awk '
+		NR == FNR {
+			if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+				k = substr($0, 1, index($0, "=") - 1)
+				if (!(k in val)) order[++n] = k
+				val[k] = $0
+			}
+			next
+		}
+		{
+			if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+				k = substr($0, 1, index($0, "=") - 1)
+				if (k in val) { print val[k]; seen[k] = 1; next }
+			}
+			print
+		}
+		END {
+			for (i = 1; i <= n; i++) {
+				k = order[i]
+				if (k in seen) continue
+				if (!note++) {
+					print ""
+					print "# Carried over from a previous installation."
+				}
+				print val[k]
+			}
+		}
+	' "$old" "$new"
+}
+
+# The image ships whoever built it their own authorised key, and the archive
+# holds whoever the machine trusted.  Replacing one set with the other locks
+# somebody out either way, so both survive.  Keys are compared on the key
+# material itself, not the whole line, so a renamed comment is not a new key.
+merge_keys() {
+	cat "$@" 2>/dev/null | awk '
+		NF && $1 !~ /^#/ {
+			k = ($2 != "" ? $2 : $0)
+			if (!seen[k]++) print
+		}
+	'
+}
+
+# Settings that are not finished when their file is in place.
+apply_extras() {
+	base="${ROOT:-}"
+
+	# /etc/timezone is the answer; /etc/localtime is what everything actually
+	# reads.  Carrying the first without relinking the second gives an
+	# installed machine the right time zone on paper and the live session's
+	# clock in practice.
+	tz=$(mlos_root cat "$base/etc/timezone" 2>/dev/null | tr -d '[:space:]')
+	if [ -n "$tz" ] && [ -e "$base/usr/share/zoneinfo/$tz" ]; then
+		mlos_root ln -sfn "/usr/share/zoneinfo/$tz" "$base/etc/localtime" \
+			2>/dev/null || true
+	fi
+
+	# console-setup caches a compiled keymap and prefers it to
+	# /etc/default/keyboard.  Left in place it is the *previous* layout, so
+	# the console comes back on the wrong keys; deleted, it is rebuilt at the
+	# next boot from the file that just arrived.
+	mlos_root sh -c 'rm -f "$1"/etc/console-setup/cached_*' _ "${base:-/}" \
+		2>/dev/null || true
+
+	# The account password, spliced back into an /etc/shadow that otherwise
+	# belongs to the image.
+	sf="$base/var/lib/moonlight-os/carried/shadow"
+	if [ -s "$sf" ] && [ -f "$base/etc/shadow" ]; then
+		hash=$(mlos_root cat "$sf" 2>/dev/null)
+		case "$hash" in
+			'$'*) tmp=$(mktemp)
+			      if mlos_root awk -F: -v OFS=: -v h="$hash" \
+					'$1 == "moonlight" { $2 = h } { print }' \
+					"$base/etc/shadow" > "$tmp" && [ -s "$tmp" ]; then
+				      mlos_root cp "$tmp" "$base/etc/shadow"
+				      mlos_root chown root:shadow "$base/etc/shadow" 2>/dev/null \
+					      || mlos_root chown 0:42 "$base/etc/shadow" 2>/dev/null || true
+				      mlos_root chmod 0640 "$base/etc/shadow"
+			      fi
+			      rm -f "$tmp" ;;
+		esac
+	fi
+	mlos_root rm -rf "$base/var/lib/moonlight-os/carried" 2>/dev/null || true
+}
+
+# Copy a file aside for merging.  The originals are root-owned and some of
+# them are 0600, so the copy has to be handed to whoever is running this or the
+# merge -- which is a plain shell function, not something sudo can be given --
+# cannot read back what it just asked for.
+stash_copy() {
+	mlos_root cp "$1" "$2" 2>/dev/null || return 1
+	mlos_root chown "$(id -u):$(id -g)" "$2" 2>/dev/null || true
+	mlos_root chmod u+rw "$2" 2>/dev/null || true
+}
+
 do_restore() {
 	src="$1"
 	[ -f "$src" ] || { printf 'no such file: %s\n' "$src" >&2; return 1; }
-	mlos_root tar xzf "$src" -C "${ROOT:-/}" || return 1
+	base="${ROOT:-}"
+
+	# Whatever the fresh system has that the extract is about to bury, kept
+	# so it can be merged back rather than lost.
+	stash=$(mktemp -d)
+	stash_copy "$base/etc/moonlight-os/moonlight-os.conf" "$stash/conf.new" || true
+	stash_copy "$base/home/moonlight/.ssh/authorized_keys" "$stash/keys.new" || true
+
+	if ! mlos_root tar xzf "$src" -C "${ROOT:-/}"; then
+		rm -rf "$stash"
+		return 1
+	fi
+
+	conf="$base/etc/moonlight-os/moonlight-os.conf"
+	if [ -s "$stash/conf.new" ] && [ -s "$conf" ]; then
+		stash_copy "$conf" "$stash/conf.old" || true
+		merged=$(mktemp)
+		if merge_conf "$stash/conf.old" "$stash/conf.new" > "$merged" \
+				&& [ -s "$merged" ]; then
+			mlos_root cp "$merged" "$conf"
+			mlos_root chmod 0644 "$conf"
+		fi
+		rm -f "$merged"
+	fi
+
+	keys="$base/home/moonlight/.ssh/authorized_keys"
+	if [ -s "$stash/keys.new" ]; then
+		stash_copy "$keys" "$stash/keys.old" || true
+		merged=$(mktemp)
+		if merge_keys "$stash/keys.new" "$stash/keys.old" > "$merged" \
+				&& [ -s "$merged" ]; then
+			mlos_root mkdir -p "$base/home/moonlight/.ssh"
+			mlos_root cp "$merged" "$keys"
+		fi
+		rm -f "$merged"
+	fi
+	rm -rf "$stash"
+
+	apply_extras
 
 	# Ownership: the archive was made as root, and the user's own files have
 	# to go back to the user or Moonlight and sshd both ignore them.
@@ -119,6 +326,36 @@ do_restore() {
 	mlos_root sh -c 'chmod 0600 "$1"/etc/ssh/ssh_host_*_key' _ "${ROOT:-/}" 2>/dev/null || true
 	mlos_root chmod 0700 "$ROOT/etc/NetworkManager/system-connections" 2>/dev/null || true
 	mlos_root sh -c 'chmod 0600 "$1"/etc/NetworkManager/system-connections/*' _ "${ROOT:-/}" 2>/dev/null || true
+	return 0
+}
+
+# What is actually in an archive, in the words the menus use.  "Carry my
+# settings over?" is a question nobody can answer without this: the useful
+# reply is not "yes" but "yes, and it had better have my Wi-Fi in it".
+summary() {
+	src="$1"
+	[ -f "$src" ] || { printf 'no such file: %s\n' "$src" >&2; return 1; }
+	names=$(mlos_root tar tzf "$src" 2>/dev/null) || return 1
+	[ -n "$names" ] || return 1
+
+	has() { printf '%s\n' "$names" | grep -q "$1"; }
+	count() { printf '%s\n' "$names" | grep -c "$1"; }
+
+	if has '^home/moonlight/\.config/Moonlight Game Streaming Project/Moonlight\.conf$'; then
+		printf 'Moonlight pairing and settings\n'
+	fi
+	n=$(count '^etc/NetworkManager/system-connections/..*')
+	[ "$n" -gt 0 ] && printf 'Wi-Fi and network: %s saved connection(s)\n' "$n"
+	has '^var/lib/tailscale/tailscaled\.state$' && printf 'Tailscale login\n'
+	# .../<adapter mac>/<device mac>/info, one per remembered device.
+	n=$(count '^var/lib/bluetooth/.*/info$')
+	[ "$n" -gt 0 ] && printf 'Bluetooth: %s paired device(s)\n' "$n"
+	has '^etc/moonlight-os/moonlight-os\.conf$' \
+		&& printf 'Displays, picture quality, sound, USB passthrough\n'
+	{ has '^etc/default/keyboard$' || has '^etc/timezone$'; } \
+		&& printf 'Keyboard layout and time zone\n'
+	has '^etc/ssh/ssh_host_' && printf 'SSH host keys and authorised keys\n'
+	has "^$CARRIED/shadow$" && printf 'The SSH account password\n'
 	return 0
 }
 
@@ -169,7 +406,8 @@ reinstalling does not mean setting it all up again." 20 74 4 \
 				   "$(sq 'Which backup?')" 18 78 8 -- "$menu_items" \
 				   3>&1 1>&2 2>&3) || continue
 			   file=$(printf '%s\n' $archives | sed -n "${pick}p")
-			   if mlos_yesno "Restore from:\n\n$file\n\nThis overwrites the current settings."; then
+			   what=$(summary "$file" 2>/dev/null | sed 's/^/  /')
+			   if mlos_yesno "Restore from:\n\n$file\n\nIt holds:\n\n${what:-  (nothing this version recognises)}\n\nThis replaces the matching settings on this machine."; then
 				   if do_restore "$file"; then
 					   mlos_msg "Restored.\n\nReboot to pick all of it up."
 				   else
@@ -191,7 +429,9 @@ case "${1:---menu}" in
 	--save-from)  ROOT="${2%/}"; do_save "$3" ;;
 	--restore-to) ROOT="${2%/}"; do_restore "$3" ;;
 	--list)       existing ;;
+	--summary)    summary "$2" ;;
+	--find)       find_archives ;;
 	--menu)       menu ;;
-	*) printf 'usage: moonlight-backup [--save [dir]|--restore <file>|--save-from <root> <dir>|--restore-to <root> <file>|--list|--menu]\n' >&2
+	*) printf 'usage: moonlight-backup [--save [dir]|--restore <file>|--save-from <root> <dir>|--restore-to <root> <file>|--list|--summary <file>|--find|--menu]\n' >&2
 	   exit 2 ;;
 esac

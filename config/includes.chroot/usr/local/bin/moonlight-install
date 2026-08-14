@@ -95,6 +95,116 @@ Everything on it will be erased.")" 20 76 10 -- "$menu" \
 	return 1
 }
 
+# ---------------------------------------------------------------- migration ---
+
+# Every ext4 partition that is not on the medium we booted from, with the one
+# about to be erased first.  Reinstalling onto the same disk is the common
+# case, but moving from the old spinning disk to a new NVMe is the one where
+# losing the settings hurts most -- and there the old system is sitting on a
+# drive the installer is not going to touch, so it has to be looked at too.
+installs_found() {
+	target="$1"
+	src=$(live_disk)
+	for d in $(lsblk -dnp -o NAME,TYPE 2>/dev/null | awk '$2 == "disk" {print $1}'); do
+		[ "$d" = "$src" ] && continue
+		case "$d" in /dev/loop*) continue ;; esac
+		for part in $(lsblk -lnp -o NAME,FSTYPE "$d" 2>/dev/null \
+				| awk '$2 == "ext4" {print $1}'); do
+			if [ "$d" = "$target" ]; then
+				printf '0\t%s\t%s\n' "$part" "$d"
+			else
+				printf '1\t%s\t%s\n' "$part" "$d"
+			fi
+		done
+	done | sort -k1,1
+}
+
+# Read the settings off an existing installation, or off a backup archive on
+# any medium that happens to be plugged in.  Prints the archive path, and
+# nothing at all when there was nothing to take or the user said no.
+#
+# Everything here runs before the disk is touched, and a failure is reported
+# rather than swallowed: silently installing a system with none of your
+# settings in it is the one outcome nobody would have chosen.
+#
+# The candidate list is read on fd 3, not on stdin.  whiptail takes its
+# keystrokes from stdin, so a dialog raised inside a `while read` loop that is
+# fed by a pipe or a redirect gets the partition list typed into it instead of
+# the user's answer.
+harvest_settings() {
+	target="$1"
+	found=""
+	mnt=$(mktemp -d)
+	list=$(mktemp)
+	installs_found "$target" > "$list"
+
+	while IFS="$(printf '\t')" read -r _ part disk <&3; do
+		mlos_root mount -o ro "$part" "$mnt" 2>/dev/null || continue
+		if [ ! -f "$mnt/etc/moonlight-os/moonlight-os.conf" ]; then
+			mlos_root umount "$mnt" 2>/dev/null
+			continue
+		fi
+
+		if [ "$disk" = "$target" ]; then
+			where="This disk already has Moonlight OS on it."
+		else
+			where="Moonlight OS is installed on $disk, which is not the disk being erased."
+		fi
+
+		if ! mlos_yesno "$where\n\nCarry its settings over into the new installation?"; then
+			mlos_root umount "$mnt" 2>/dev/null
+			continue
+		fi
+
+		err=$(mktemp)
+		out=$(mlos_root moonlight-backup --save-from "$mnt" /tmp 2>"$err")
+		mlos_root umount "$mnt" 2>/dev/null
+
+		if [ -n "$out" ] && [ -f "$out" ]; then
+			what=$(moonlight-backup --summary "$out" 2>/dev/null | sed 's/^/  /')
+			rm -f "$err"
+			if mlos_yesno "Taken from $part:\n\n${what:-  (nothing recognisable)}\n\nCarry all of this over?"; then
+				found="$out"
+				break
+			fi
+			continue
+		fi
+
+		reason=$(tail -3 "$err" 2>/dev/null | sed 's/^/  /')
+		rm -f "$err"
+		if ! mlos_yesno "The settings on $part could not be read:\n\n${reason:-  (no reason given)}\n\nInstall anyway?  Everything on that disk -- pairing, Wi-Fi, Tailscale -- would have to be set up again from scratch."; then
+			found="ABORT"
+			break
+		fi
+	done 3< "$list"
+
+	rmdir "$mnt" 2>/dev/null
+
+	if [ -n "$found" ]; then
+		rm -f "$list"
+		printf '%s\n' "$found"
+		return 0
+	fi
+
+	# ...or from a backup on any plugged-in medium, newest first.  Not just
+	# the boot stick: the archive is usually on whichever stick was to hand
+	# when it was written, and that is rarely the one being booted from.
+	# The names are timestamped, so a reverse sort is newest first.
+	moonlight-backup --find 2>/dev/null | sort -r > "$list"
+	while IFS= read -r f <&3; do
+		[ -f "$f" ] || continue
+		what=$(moonlight-backup --summary "$f" 2>/dev/null | sed 's/^/  /')
+		if mlos_yesno "Found a settings backup:\n\n$f\n\nIt holds:\n\n${what:-  (nothing recognisable)}\n\nRestore it into the new installation?"; then
+			found="$f"
+			break
+		fi
+	done 3< "$list"
+	rm -f "$list"
+
+	[ -n "$found" ] && printf '%s\n' "$found"
+	return 0
+}
+
 main() {
 	if [ ! -d /run/live/medium ]; then
 		mlos_msg "Moonlight OS is already installed on this machine."
@@ -122,30 +232,13 @@ This cannot be undone. Continue?" 20 76 || exit 0
 	[ "$confirm" = "ERASE" ] || { mlos_msg "Not confirmed. Nothing was changed."; exit 0; }
 
 	# ---- carry the old settings over ------------------------------------
-	# Done before anything is written, from the disk itself: reinstalling
-	# should not cost you Moonlight's pairing, the Wi-Fi passwords, the
-	# Tailscale login or the display setup.
-	carried=""
-	old=$(mktemp -d)
-	for part in $(lsblk -lnp -o NAME,FSTYPE "$disk" 2>/dev/null | awk '$2 == "ext4" {print $1}'); do
-		mlos_root mount -o ro "$part" "$old" 2>/dev/null || continue
-		if [ -f "$old/etc/moonlight-os/moonlight-os.conf" ]; then
-			if mlos_yesno "This disk already has Moonlight OS on it.\n\nCarry its settings over -- pairing, Wi-Fi, Tailscale, Bluetooth, keyboard and displays?"; then
-				carried=$(mlos_root moonlight-backup --save-from "$old" /tmp 2>/dev/null | tail -1)
-			fi
-			mlos_root umount "$old" 2>/dev/null
-			break
-		fi
-		mlos_root umount "$old" 2>/dev/null
-	done
-	rmdir "$old" 2>/dev/null
-
-	# ...or from a backup sitting on the USB stick.
-	if [ -z "$carried" ]; then
-		found=$(ls /run/live/medium/moonlight-os-settings-*.tar.gz 2>/dev/null | tail -1)
-		if [ -n "$found" ] && mlos_yesno "Found a settings backup on the boot medium:\n\n$found\n\nRestore it into the new installation?"; then
-			carried="$found"
-		fi
+	# Done before anything is written: reinstalling should not cost you
+	# Moonlight's pairing, the Wi-Fi passwords, the Tailscale login, the
+	# Bluetooth pairings or the display setup.
+	carried=$(harvest_settings "$disk")
+	if [ "$carried" = "ABORT" ]; then
+		mlos_msg "Installation cancelled.  Nothing was changed and $disk is untouched.\n\nIf the old system still boots, System -> Back up / restore settings will write its settings to a USB stick, and this installer picks that up instead."
+		exit 0
 	fi
 
 	clear
@@ -250,21 +343,51 @@ This cannot be undone. Continue?" 20 76 || exit 0
 	printf '  [6/6] Finishing up...\n'
 	# Keyboard, time zone and any pairing done from the live session carry
 	# over as-is -- that is the point of copying the running system.
+	#
+	# The default name is written before the restore, not after: an archive
+	# carries /etc/hostname, and a machine that had been renamed should come
+	# back under its own name rather than this one.
 	printf 'moonlight-os\n' | mlos_root tee "$TARGET/etc/hostname" >/dev/null
 
 	if [ -n "$carried" ] && [ -f "$carried" ]; then
 		printf '  Restoring your settings...\n'
-		if mlos_root moonlight-backup --restore-to "$TARGET" "$carried"; then
-			settings_note="\n\nYour previous settings were carried over."
+		err=$(mktemp)
+		if mlos_root moonlight-backup --restore-to "$TARGET" "$carried" 2>"$err"; then
+			what=$(moonlight-backup --summary "$carried" 2>/dev/null | sed 's/^/  /')
+			settings_note="
+
+Carried over:
+
+${what:-  (nothing this version recognises)}"
 		else
-			settings_note="\n\nThe settings could not be restored; the archive is at $carried."
+			# The archive is in the live system's tmpfs and the next thing
+			# that happens is a reboot, so a copy goes onto the new disk --
+			# otherwise the one existing copy of the settings evaporates
+			# along with the message explaining where to find it.
+			keep="/home/moonlight/$(basename "$carried")"
+			mlos_root cp "$carried" "$TARGET$keep" 2>/dev/null \
+				&& mlos_root chown moonlight:moonlight "$TARGET$keep" 2>/dev/null
+			settings_note="
+
+The settings could not be restored:
+
+$(tail -3 "$err" | sed 's/^/  /')
+
+A copy was left at $keep on the new disk.  Once it has
+booted, System -> Back up / restore settings will find it there."
 		fi
+		rm -f "$err"
 	fi
 
 	mlos_root sync
 	cleanup
 
-	if mlos_yesno "Moonlight OS has been installed to $disk.${settings_note:-}\n\nRemove the USB stick and reboot now?"; then
+	# Its own box rather than mlos_msg: the list of what was carried over is
+	# the part worth reading, and it does not fit in twelve lines.
+	if whiptail --title "Moonlight OS" --yesno \
+"Moonlight OS has been installed to $disk.${settings_note:-}
+
+Remove the USB stick and reboot now?" 24 76; then
 		mlos_root systemctl reboot
 	fi
 }
