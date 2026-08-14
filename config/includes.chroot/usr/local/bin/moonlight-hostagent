@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Talk to moonlight-os-host-utils on the host PC.
+"""Talk to mlos-host-utils on the host PC.
 
 This is what the shell menus use.  It never mentions Windows or Linux,
 because it does not know which one is at the other end and does not need to:
@@ -35,7 +35,7 @@ def fmt_ping(data):
     tool = data.get("client_tool") or {}
     lines = [
         "host PC     %s (%s/%s)" % (data.get("hostname", "?"), data.get("os", "?"), data.get("arch", "?")),
-        "agent       moonlight-os-host-utils %s" % data.get("version", "?"),
+        "agent       mlos-host-utils %s" % data.get("version", "?"),
     ]
     if tool.get("present"):
         lines.append("usb/ip      %s" % (tool.get("version") or tool.get("path") or "installed"))
@@ -201,7 +201,7 @@ def main():
     except mh.HostError as exc:
         if exc.code == "not_paired":
             die("No host PC is paired yet.\n"
-                "Run  moonlight-os-host-utils install  on it, then use\n"
+                "Run  mlos-host-utils install  on it, then use\n"
                 "Devices & input -> USB passthrough -> Pair this host PC.",
                 NOT_PAIRED)
         die("%s" % exc)

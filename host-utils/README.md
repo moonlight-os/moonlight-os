@@ -1,4 +1,4 @@
-# moonlight-os-host-utils
+# mlos-host-utils
 
 The host PC half of USB passthrough. One static binary, Windows and Linux,
 no dependencies.
@@ -10,16 +10,34 @@ on Ubuntu, and makes it so.
 
 ## Install it on the host PC
 
-Download the binary for the machine, then:
+### Windows, with winget
 
 ```powershell
-# Windows, in an Administrator PowerShell
-.\moonlight-os-host-utils-windows-amd64.exe install
+winget install MopigamesYT.MlosHostUtils
+mlos-host-utils install          # from an Administrator terminal
 ```
 
+winget only puts the binary on your PATH. The second line is what sets up
+USB/IP, the boot task and the firewall, and it prints the pairing code.
+
+### Windows, from the releases page
+
+Download `mlos-host-utils-windows-amd64.exe` and **double-click it**. It opens
+a wizard: it asks for administrator rights, does everything below, and leaves
+the pairing code on screen until you close the window.
+
+If you would rather do it from a terminal, it is the same command winget
+users run:
+
+```powershell
+# Administrator PowerShell
+.\mlos-host-utils-windows-amd64.exe install
+```
+
+### Linux
+
 ```sh
-# Linux
-sudo ./moonlight-os-host-utils-linux-amd64 install
+sudo ./mlos-host-utils-linux-amd64 install
 ```
 
 That one command:
@@ -30,6 +48,9 @@ That one command:
 - opens the port in the firewall, private networks only
 - copies itself to a stable location, so tidying up your Downloads folder
   does not quietly stop the agent coming back after a reboot
+- puts that location on your PATH, so `mlos-host-utils` is a command in any
+  new terminal (`/usr/local/bin` on Linux; the machine PATH on Windows, so
+  terminals already open keep the old one until they are reopened)
 - starts the agent at boot: a scheduled task running as `SYSTEM` on Windows,
   a systemd unit on Linux. Both run before anyone logs in and keep running
   while the session is locked, the same as Sunshine's own service
@@ -40,9 +61,9 @@ host PC**. After that, plugging a wheel into the thin client makes it appear
 on the host PC, and unplugging it takes it away again.
 
 ```
-moonlight-os-host-utils status      what's installed, paired and attached
-moonlight-os-host-utils pair        print the pairing code again
-moonlight-os-host-utils uninstall   remove the service and firewall rule
+mlos-host-utils status      what's installed, paired and attached
+mlos-host-utils pair        print the pairing code again
+mlos-host-utils uninstall   remove the service and firewall rule
 ```
 
 ### Surviving a reboot
@@ -74,7 +95,7 @@ what `install` fetches.
 
 Its driver is signed per release through the Open Source Codesigning
 Initiative, so no test-signing dance in the normal case. If Windows does
-refuse to load it, `moonlight-os-host-utils testsigning on` is there — it is a
+refuse to load it, `mlos-host-utils testsigning on` is there — it is a
 command-line-only escape hatch, never reachable over the network, because it
 changes how the machine boots and weakens driver checking. Try without it
 first.
@@ -130,6 +151,6 @@ Wi-Fi roam or a tailnet reconnect doesn't cost you the wheel mid-corner.
 Needs Go 1.21+. Nothing else.
 
 ```sh
-./build.sh          # -> dist/moonlight-os-host-utils-{linux,windows}-{amd64,arm64}
+./build.sh          # -> dist/mlos-host-utils-{linux,windows}-{amd64,arm64}
 go test ./...
 ```

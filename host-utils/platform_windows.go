@@ -14,15 +14,19 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
-const taskName = "MoonlightOSHostUtils"
+// The scheduled task carries the program's name, so it renamed with it.  The
+// old name is not just left behind: removeLegacyInstall deletes it, because
+// two boot tasks racing for one port is worse than either alone.
+const taskName = "MlosHostUtils"
 
 func configDir() string {
 	if d := os.Getenv("ProgramData"); d != "" {
-		return filepath.Join(d, "moonlight-os-host-utils")
+		return filepath.Join(d, "mlos-host-utils")
 	}
-	return filepath.Join(os.Getenv("SystemDrive")+`\`, "moonlight-os-host-utils")
+	return filepath.Join(os.Getenv("SystemDrive")+`\`, "mlos-host-utils")
 }
 
 // isPrivileged tests for Administrator the way that actually works without
@@ -89,7 +93,208 @@ func installedExePath() string {
 	if dir == "" {
 		dir = filepath.Join(os.Getenv("SystemDrive")+`\`, "Program Files")
 	}
-	return filepath.Join(dir, "moonlight-os-host-utils", "moonlight-os-host-utils.exe")
+	return filepath.Join(dir, "mlos-host-utils", "mlos-host-utils.exe")
+}
+
+// ---------------------------------------------------------------- PATH ----
+
+// The machine PATH lives in the registry, and it is edited there rather than
+// with setx: setx silently truncates anything past 1024 characters, and a
+// machine PATH on a PC that has had a few SDKs on it is routinely longer
+// than that.  Truncating the system PATH is not a bug anyone would connect
+// back to a USB passthrough agent.
+const pathEnvKey = `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`
+
+// readSystemPath returns the machine PATH and the registry type it is stored
+// as, because rewriting a REG_EXPAND_SZ as REG_SZ turns every %SystemRoot%
+// already in there into a literal that resolves to nothing.
+func readSystemPath() (value, kind string, err error) {
+	out, err := output("reg.exe", "query", pathEnvKey, "/v", "Path")
+	if err != nil {
+		return "", "", fmt.Errorf("could not read the system PATH: %w", err)
+	}
+	return parseRegPath(out)
+}
+
+// parseRegPath pulls the value out of `reg query` output, which is
+//
+//	<blank>
+//	HKEY_LOCAL_MACHINE\SYSTEM\...\Environment
+//	    Path    REG_EXPAND_SZ    C:\Windows;C:\Program Files\Git\cmd
+//
+// The value is taken as everything after the type token rather than by
+// splitting on whitespace, because directory names in it contain spaces --
+// "C:\Program Files\..." is in every real PATH there is.
+func parseRegPath(out string) (value, kind string, err error) {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "Path") ||
+			!strings.HasPrefix(fields[1], "REG_") {
+			continue
+		}
+		kind = fields[1]
+		rest := line[strings.Index(line, kind)+len(kind):]
+		return strings.TrimSpace(rest), kind, nil
+	}
+	return "", "", fmt.Errorf("no Path value under %s", pathEnvKey)
+}
+
+func pathContains(pathValue, dir string) bool {
+	for _, e := range strings.Split(pathValue, ";") {
+		e = strings.TrimRight(strings.TrimSpace(e), `\`)
+		if strings.EqualFold(e, strings.TrimRight(dir, `\`)) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeSystemPath(value, kind string) error {
+	if kind == "" {
+		kind = "REG_EXPAND_SZ"
+	}
+	// A value ending in a backslash would escape the closing quote Windows
+	// puts around the argument, and reg.exe would see a mangled PATH.
+	value = strings.TrimRight(value, `\`)
+	if err := run("reg.exe", "add", pathEnvKey, "/v", "Path", "/t", kind, "/d", value, "/f"); err != nil {
+		return err
+	}
+	broadcastEnvChange()
+	return nil
+}
+
+// ensureOnPath puts the install directory on the machine PATH, so that
+// `mlos-host-utils status` works in a terminal the way it does on Linux --
+// where /usr/local/bin has already answered this question.
+func ensureOnPath(exe string) ([]string, error) {
+	dir := filepath.Dir(exe)
+	value, kind, err := readSystemPath()
+	if err != nil {
+		return nil, err
+	}
+	if pathContains(value, dir) {
+		return nil, nil
+	}
+	if !strings.HasSuffix(value, ";") {
+		value += ";"
+	}
+	if err := writeSystemPath(value+dir, kind); err != nil {
+		return nil, fmt.Errorf("could not add %s to the system PATH: %w", dir, err)
+	}
+	return []string{
+		"added " + dir + " to the system PATH",
+		"terminals already open keep the old PATH -- open a new one",
+	}, nil
+}
+
+func removeFromPath() []string {
+	dir := filepath.Dir(installedExePath())
+	value, kind, err := readSystemPath()
+	if err != nil || !pathContains(value, dir) {
+		return nil
+	}
+	kept := []string{}
+	for _, e := range strings.Split(value, ";") {
+		trimmed := strings.TrimRight(strings.TrimSpace(e), `\`)
+		if trimmed == "" || strings.EqualFold(trimmed, strings.TrimRight(dir, `\`)) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if err := writeSystemPath(strings.Join(kept, ";"), kind); err != nil {
+		return nil
+	}
+	return []string{"removed " + dir + " from the system PATH"}
+}
+
+var (
+	user32                    = syscall.NewLazyDLL("user32.dll")
+	procSendMessageTimeout    = user32.NewProc("SendMessageTimeoutW")
+	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
+	procGetConsoleProcessList = kernel32.NewProc("GetConsoleProcessList")
+)
+
+// broadcastEnvChange is what makes the new PATH reach a terminal opened a
+// second from now.  Processes read the environment once, at startup, from
+// whatever their parent handed them; Explorer only refreshes its own copy
+// when it is told the environment changed.  Without this the PATH edit does
+// not appear until the next sign-in, which reads as "it did not work".
+func broadcastEnvChange() {
+	const (
+		hwndBroadcast   = 0xFFFF
+		wmSettingChange = 0x001A
+		smtoAbortIfHung = 0x0002
+	)
+	env, err := syscall.UTF16PtrFromString("Environment")
+	if err != nil {
+		return
+	}
+	var result uintptr
+	procSendMessageTimeout.Call(hwndBroadcast, wmSettingChange, 0,
+		uintptr(unsafe.Pointer(env)), smtoAbortIfHung, 5000,
+		uintptr(unsafe.Pointer(&result)))
+}
+
+// ownsConsole reports whether this process is the only one attached to its
+// console, which is the difference between being double-clicked in Explorer
+// -- Windows makes a console just for us, and destroys it, and the window,
+// the moment we exit -- and being run from a terminal that was already
+// there.  Only in the first case does printing usage and exiting show the
+// user a window that blinks and is gone.
+func ownsConsole() bool {
+	var pids [4]uint32
+	n, _, _ := procGetConsoleProcessList.Call(
+		uintptr(unsafe.Pointer(&pids[0])), uintptr(len(pids)))
+	return n == 1
+}
+
+// elevate re-runs this executable as administrator.  ShellExecute with the
+// runas verb is the only way to raise a UAC prompt, and reaching it without
+// a dependency means going through PowerShell's Start-Process, which is the
+// same call underneath.
+func elevate(args ...string) error {
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+	ps := "Start-Process -FilePath " + quote(exePath())
+	if len(args) > 0 {
+		quoted := make([]string, len(args))
+		for i, a := range args {
+			quoted[i] = quote(a)
+		}
+		ps += " -ArgumentList " + strings.Join(quoted, ",")
+	}
+	ps += " -Verb RunAs"
+	return run("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps)
+}
+
+// removeLegacyInstall clears out an install made under the old
+// moonlight-os-host-utils name.  Left alone it is a second agent on the same
+// port at every boot: the new one fails to bind, and the only symptom is
+// pairing that works once and then reports the wrong version forever.
+func removeLegacyInstall() []string {
+	const legacyTask = "MoonlightOSHostUtils"
+	acts := []string{}
+	if err := run("schtasks.exe", "/query", "/tn", legacyTask); err == nil {
+		_ = run("schtasks.exe", "/end", "/tn", legacyTask)
+		if err := run("schtasks.exe", "/delete", "/tn", legacyTask, "/f"); err == nil {
+			acts = append(acts, "removed the old "+legacyTask+" scheduled task")
+		}
+	}
+	dir := os.Getenv("ProgramFiles")
+	if dir == "" {
+		dir = filepath.Join(os.Getenv("SystemDrive")+`\`, "Program Files")
+	}
+	legacyDir := filepath.Join(dir, "moonlight-os-host-utils")
+	if _, err := os.Stat(legacyDir); err == nil {
+		if err := os.RemoveAll(legacyDir); err == nil {
+			acts = append(acts, "removed "+legacyDir)
+		}
+	}
+	// The config moved with the name; carrying it across keeps the pairing
+	// code someone has already typed into Moonlight OS.
+	if d := os.Getenv("ProgramData"); d != "" {
+		acts = append(acts, adoptLegacyConfig(filepath.Join(d, "moonlight-os-host-utils"))...)
+	}
+	return acts
 }
 
 func rebootFlag() string { return filepath.Join(stateDir(), "needs-reboot") }
@@ -194,7 +399,7 @@ type ghRelease struct {
 func downloadUSBIPWin2() (path, name string, err error) {
 	req, _ := http.NewRequest("GET", "https://api.github.com/repos/vadimgrn/usbip-win2/releases/latest", nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "moonlight-os-host-utils/"+Version)
+	req.Header.Set("User-Agent", "mlos-host-utils/"+Version)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -342,7 +547,7 @@ func installService(exe string, port int) ([]string, error) {
 
 	// schtasks /xml wants UTF-16LE with a byte order mark; handed UTF-8 it
 	// reports a parse error that names no line and explains nothing.
-	path := filepath.Join(os.TempDir(), "moonlight-os-host-utils-task.xml")
+	path := filepath.Join(os.TempDir(), "mlos-host-utils-task.xml")
 	if err := os.WriteFile(path, utf16LE(body), 0o600); err != nil {
 		return acts, err
 	}

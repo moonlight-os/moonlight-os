@@ -38,7 +38,7 @@ func (a *Agent) Serve(port int) error {
 	} else {
 		logf("no USB/IP client installed yet -- Moonlight OS can ask for one with the install op")
 	}
-	logf("moonlight-os-host-utils %s listening on :%d", Version, port)
+	logf("mlos-host-utils %s listening on :%d", Version, port)
 
 	go a.janitor()
 
@@ -138,7 +138,7 @@ func (a *Agent) dispatch(peer string, req Request) Response {
 		return fail("wrong pairing code -- pair this host PC again from the Moonlight OS menu", CodeBadToken)
 	}
 	if req.V > ProtocolVersion {
-		return fail(fmt.Sprintf("this agent speaks protocol %d, the client wants %d -- update moonlight-os-host-utils",
+		return fail(fmt.Sprintf("this agent speaks protocol %d, the client wants %d -- update mlos-host-utils",
 			ProtocolVersion, req.V), CodeBadRequest)
 	}
 
@@ -163,7 +163,7 @@ func (a *Agent) dispatch(peer string, req Request) Response {
 func (a *Agent) opPing() Response {
 	host, _ := os.Hostname()
 	res := PingResult{
-		Agent:    "moonlight-os-host-utils",
+		Agent:    "mlos-host-utils",
 		Version:  Version,
 		Protocol: ProtocolVersion,
 		OS:       runtime.GOOS,

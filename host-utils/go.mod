@@ -1,3 +1,3 @@
-module moonlight-os-host-utils
+module mlos-host-utils
 
 go 1.21

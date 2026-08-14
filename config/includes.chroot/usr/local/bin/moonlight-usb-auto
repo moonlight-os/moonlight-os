@@ -4,7 +4,7 @@
 Plug a wheel into this machine and it appears on the host PC.  Unplug it
 and it goes away again.  No menu, no command to type at the other end, and
 nothing on this side that knows or cares which operating system the host PC
-runs -- moonlight-os-host-utils works that out over there.
+runs -- mlos-host-utils works that out over there.
 
 Started by systemd when USB_AUTOSHARE is on; exits quietly when it is not.
 

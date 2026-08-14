@@ -10,14 +10,14 @@ import (
 	"strings"
 )
 
-const serviceUnit = "/etc/systemd/system/moonlight-os-host-utils.service"
+const serviceUnit = "/etc/systemd/system/mlos-host-utils.service"
 
-func configDir() string { return "/etc/moonlight-os-host-utils" }
+func configDir() string { return "/etc/mlos-host-utils" }
 
 // Where install puts the binary so the unit has something stable to point
 // at.  /usr/local/bin is the one place on every distribution that is meant
 // for exactly this and is never touched by a package manager.
-func installedExePath() string { return "/usr/local/bin/moonlight-os-host-utils" }
+func installedExePath() string { return "/usr/local/bin/mlos-host-utils" }
 
 func isPrivileged() bool { return os.Geteuid() == 0 }
 
@@ -57,6 +57,58 @@ func findTool() (Tool, bool) {
 
 func needsReboot() bool { return false }
 
+// ensureOnPath has nothing to do here: installedExePath() is already in
+// /usr/local/bin, which is on the default PATH of every distribution this
+// runs on.  It exists so the install flow is one shape on both platforms --
+// on Windows the equivalent means editing the machine PATH in the registry.
+//
+// The one case worth reporting is a login shell that has had /usr/local/bin
+// taken *off* its PATH, because then the command genuinely will not be found
+// and the reason is nothing to do with this program.
+func ensureOnPath(exe string) ([]string, error) {
+	dir := filepath.Dir(exe)
+	for _, e := range filepath.SplitList(os.Getenv("PATH")) {
+		if strings.TrimRight(e, "/") == strings.TrimRight(dir, "/") {
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("%s is not on this shell's PATH -- add it, or call the binary by its full path", dir)
+}
+
+func removeFromPath() []string { return nil }
+
+// ownsConsole is the double-click test, and there is no double-click here:
+// a desktop Linux user who opens this from a file manager gets no terminal
+// at all, so there would be nowhere to show a wizard even if we wanted to.
+func ownsConsole() bool { return false }
+
+func elevate(args ...string) error {
+	return fmt.Errorf("no graphical elevation on Linux; %s", privilegeHint())
+}
+
+// removeLegacyInstall clears out an install made under the old
+// moonlight-os-host-utils name.  Left alone its unit still starts at boot and
+// holds the port, so the renamed service comes up dead with a bind error
+// nobody is looking at the journal for.
+func removeLegacyInstall() []string {
+	const legacyUnit = "/etc/systemd/system/moonlight-os-host-utils.service"
+	acts := []string{}
+	if _, err := os.Stat(legacyUnit); err == nil {
+		_ = run("systemctl", "disable", "--now", "moonlight-os-host-utils")
+		if err := os.Remove(legacyUnit); err == nil {
+			acts = append(acts, "removed "+legacyUnit)
+			_ = run("systemctl", "daemon-reload")
+		}
+	}
+	if err := os.Remove("/usr/local/bin/moonlight-os-host-utils"); err == nil {
+		acts = append(acts, "removed /usr/local/bin/moonlight-os-host-utils")
+	}
+	_ = os.Remove("/etc/modules-load.d/moonlight-os-host-utils.conf")
+	// The config moved with the name; carrying it across keeps the pairing
+	// code someone has already typed into Moonlight OS.
+	return append(acts, adoptLegacyConfig("/etc/moonlight-os-host-utils")...)
+}
+
 // ensureClient makes this machine able to import USB devices: the vhci-hcd
 // module loaded now and at every boot, and a usbip binary to drive it.
 func ensureClient() (InstallResult, error) {
@@ -76,7 +128,7 @@ func ensureClient() (InstallResult, error) {
 		res.Actions = append(res.Actions, "loaded vhci-hcd")
 	}
 
-	const modconf = "/etc/modules-load.d/moonlight-os-host-utils.conf"
+	const modconf = "/etc/modules-load.d/mlos-host-utils.conf"
 	if _, err := os.Stat(modconf); err != nil {
 		body := "# Virtual USB host controller, for USB/IP passthrough from Moonlight OS.\nvhci-hcd\n"
 		if err := os.WriteFile(modconf, []byte(body), 0o644); err == nil {
@@ -178,15 +230,15 @@ WantedBy=multi-user.target
 	}
 	acts := []string{"wrote " + serviceUnit}
 	_ = run("systemctl", "daemon-reload")
-	if err := run("systemctl", "enable", "--now", "moonlight-os-host-utils"); err != nil {
+	if err := run("systemctl", "enable", "--now", "mlos-host-utils"); err != nil {
 		return acts, fmt.Errorf("systemctl enable failed: %w", err)
 	}
-	return append(acts, "enabled and started moonlight-os-host-utils.service"), nil
+	return append(acts, "enabled and started mlos-host-utils.service"), nil
 }
 
 func uninstallService() []string {
 	acts := []string{}
-	if err := run("systemctl", "disable", "--now", "moonlight-os-host-utils"); err == nil {
+	if err := run("systemctl", "disable", "--now", "mlos-host-utils"); err == nil {
 		acts = append(acts, "stopped and disabled the service")
 	}
 	if err := os.Remove(serviceUnit); err == nil {

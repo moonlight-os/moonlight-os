@@ -1,4 +1,4 @@
-"""Talking to moonlight-os-host-utils on the host PC, and deciding which
+"""Talking to mlos-host-utils on the host PC, and deciding which
 of the USB devices plugged in here are safe to hand over.
 
 Everything else in Moonlight OS is POSIX sh, and this is not, for one reason:

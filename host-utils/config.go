@@ -112,6 +112,28 @@ func FormatToken(s string) string {
 	return strings.Join(parts, "-")
 }
 
+// adoptLegacyConfig moves a config left behind by an install under the old
+// name, so that renaming the program does not silently issue a new pairing
+// code and invalidate the one already typed into Moonlight OS.
+func adoptLegacyConfig(legacyDir string) []string {
+	old := filepath.Join(legacyDir, "config.json")
+	data, err := os.ReadFile(old)
+	if err != nil {
+		return nil
+	}
+	if _, err := os.Stat(configPath()); err == nil {
+		return nil // this install already has one; leave both alone
+	}
+	if err := os.MkdirAll(stateDir(), 0o755); err != nil {
+		return nil
+	}
+	if err := os.WriteFile(configPath(), data, 0o600); err != nil {
+		return nil
+	}
+	os.RemoveAll(legacyDir)
+	return []string{"kept the pairing code from " + old}
+}
+
 func saveConfig(c *Config) error {
 	if err := os.MkdirAll(stateDir(), 0o755); err != nil {
 		return err

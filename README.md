@@ -239,22 +239,32 @@ run on the host PC, and this is where every other setup gets tedious: the
 command is different on Windows and Linux, Windows ships no USB/IP client at
 all, and somebody has to type it at the other end every time.
 
-So the host PC gets a small agent, `moonlight-os-host-utils`, and after that
+So the host PC gets a small agent, `mlos-host-utils`, and after that
 Moonlight OS stops caring what that machine runs.
 
 ### Set it up once
 
-The ISO carries the agent. **Devices & input → USB passthrough → Download the
-agent on the host PC** serves it over the network for as long as the box is
-on screen; open the printed address on the host PC and grab the file for it.
-Then, over there:
+On a Windows host PC:
 
 ```powershell
-.\moonlight-os-host-utils-windows-amd64.exe install   # Administrator PowerShell
+winget install MopigamesYT.MlosHostUtils
+mlos-host-utils install                       # Administrator terminal
 ```
 
+Otherwise the ISO carries the agent. **Devices & input → USB passthrough →
+Download the agent on the host PC** serves it over the network for as long as
+the box is on screen; open the printed address on the host PC and grab the
+file for it. Then, over there:
+
+```powershell
+.\mlos-host-utils-windows-amd64.exe install   # Administrator PowerShell
+```
+
+Double-clicking that `.exe` works too — it opens a wizard that asks for
+administrator rights and leaves the pairing code on screen.
+
 ```sh
-sudo ./moonlight-os-host-utils-linux-amd64 install
+sudo ./mlos-host-utils-linux-amd64 install
 ```
 
 That installs a USB/IP client if the machine hasn't got one — usbip-win2 on
@@ -747,7 +757,7 @@ The scripts are POSIX `sh` and readable in one sitting:
 | `moonlight-usb`       | USB/IP passthrough                                |
 | `moonlight-usb-auto`  | watches USB, keeps the host PC in step          |
 | `moonlight-touch`     | points the touchscreen the same way as the screen |
-| `moonlight-hostagent` | speaks to moonlight-os-host-utils on the host PC|
+| `moonlight-hostagent` | speaks to mlos-host-utils on the host PC|
 | `moonlight-install`   | install to internal disk                          |
 | `moonlight-persist`   | persistence partition on the boot USB             |
 | `moonlight-menu`      | the menu shown when Moonlight exits               |

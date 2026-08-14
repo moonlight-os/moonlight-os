@@ -1,4 +1,4 @@
-// moonlight-os-host-utils runs on the host PC and does the platform half
+// mlos-host-utils runs on the host PC and does the platform half
 // of USB passthrough, so that Moonlight OS does not have to.
 //
 // Moonlight OS already refuses to care what operating system it is streaming
@@ -8,11 +8,11 @@
 // across and run it with the right privileges.  This agent moves that
 // knowledge to the machine that actually knows the answer.
 //
-//	moonlight-os-host-utils install    set everything up, print the pairing code
-//	moonlight-os-host-utils status     what is installed and what is attached
-//	moonlight-os-host-utils pair       print the pairing code again
-//	moonlight-os-host-utils run        run the agent in the foreground
-//	moonlight-os-host-utils uninstall  remove all of it
+//	mlos-host-utils install    set everything up, print the pairing code
+//	mlos-host-utils status     what is installed and what is attached
+//	mlos-host-utils pair       print the pairing code again
+//	mlos-host-utils run        run the agent in the foreground
+//	mlos-host-utils uninstall  remove all of it
 package main
 
 import (
@@ -27,7 +27,7 @@ import (
 )
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `moonlight-os-host-utils %s -- USB passthrough agent for Moonlight OS
+	fmt.Fprintf(os.Stderr, `mlos-host-utils %s -- USB passthrough agent for Moonlight OS
 
 Runs on the host PC.  Moonlight OS tells it which USB devices are plugged
 in at your end; it makes them appear at this end.
@@ -50,7 +50,15 @@ func main() {
 	log.SetFlags(log.Ltime)
 	log.SetPrefix("")
 
+	// Double-clicked from Explorer there is no command line to give, and a
+	// console app that prints usage and exits closes its own window before
+	// anyone can read it.  Owning the console is the tell, so that case gets
+	// the wizard instead.
 	if len(os.Args) < 2 {
+		if ownsConsole() {
+			runWizard()
+			return
+		}
 		usage()
 	}
 	cmd := os.Args[1]
@@ -63,6 +71,8 @@ func main() {
 	switch cmd {
 	case "install":
 		cmdInstall(*port)
+	case "wizard":
+		runWizard()
 	case "run":
 		cmdRun(*port)
 	case "status":
@@ -74,7 +84,7 @@ func main() {
 	case "testsigning":
 		cmdTestSigning(fs.Arg(0))
 	case "version", "--version", "-v":
-		fmt.Printf("moonlight-os-host-utils %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("mlos-host-utils %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -106,6 +116,16 @@ func cmdInstall(port int) {
 
 	fmt.Println("Setting up USB passthrough for Moonlight OS.")
 	fmt.Println()
+
+	// This used to install itself as moonlight-os-host-utils.  An orphaned
+	// copy of the old name is not harmless: it is a second agent holding the
+	// same port, so the new one comes up dead and nothing says why.
+	if acts := removeLegacyInstall(); len(acts) > 0 {
+		fmt.Println("  Older install ... cleaned up")
+		for _, a := range acts {
+			fmt.Println("      -", a)
+		}
+	}
 
 	fmt.Print("  USB/IP client ... ")
 	res, err := ensureClient()
@@ -150,6 +170,19 @@ func cmdInstall(port int) {
 		}
 	}
 
+	fmt.Print("  PATH ... ")
+	if pathActs, err := ensureOnPath(exe); err != nil {
+		fmt.Println("skipped")
+		fmt.Println("      ", err)
+	} else if len(pathActs) == 0 {
+		fmt.Println("already there")
+	} else {
+		fmt.Println("ok")
+		for _, a := range pathActs {
+			fmt.Println("      -", a)
+		}
+	}
+
 	fmt.Print("  Agent ... ")
 	acts, err := installService(exe, cfg.Port)
 	if err != nil {
@@ -166,6 +199,9 @@ func cmdInstall(port int) {
 
 	fmt.Println()
 	printPairing(cfg)
+	fmt.Println()
+	fmt.Printf("  %s is on your PATH now: open a new terminal and run\n", exeName())
+	fmt.Println("  `mlos-host-utils status` or `mlos-host-utils pair` from anywhere.")
 
 	if res.NeedsReboot {
 		fmt.Println()
@@ -191,7 +227,7 @@ func cmdRun(port int) {
 func cmdStatus() {
 	cfg := mustConfig()
 
-	fmt.Printf("moonlight-os-host-utils %s on %s/%s\n", Version, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("mlos-host-utils %s on %s/%s\n", Version, runtime.GOOS, runtime.GOARCH)
 	fmt.Printf("config      %s\n", configPath())
 	fmt.Printf("listening   port %d", cfg.Port)
 	if listening(cfg.Port) {
@@ -239,8 +275,23 @@ func cmdPair() {
 	printPairing(mustConfig())
 }
 
+// printPairing shows the three things that have to be typed into Moonlight
+// OS.  The code is boxed rather than listed with the rest: it is the one
+// line someone is copying across the room, and after an install it has to be
+// findable in a screenful of progress output at a glance.
+//
+// The box is ASCII on purpose -- box-drawing characters come out as mojibake
+// in a legacy Windows console, which is exactly where this gets read.
 func printPairing(cfg *Config) {
-	fmt.Println("Pair this PC from Moonlight OS:")
+	code := FormatToken(cfg.Token)
+	line := strings.Repeat("-", len(code)+8)
+	fmt.Printf("  +%s+\n", line)
+	fmt.Printf("  |    %s    |\n", code)
+	fmt.Printf("  +%s+\n", line)
+	fmt.Println("       ^ the pairing code")
+	fmt.Println()
+
+	fmt.Println("  Pair this PC from Moonlight OS:")
 	fmt.Println("  Devices & input -> USB passthrough -> Pair this host PC")
 	fmt.Println()
 	addrs := localAddrs()
@@ -253,7 +304,7 @@ func printPairing(cfg *Config) {
 		}
 	}
 	fmt.Printf("  Port:     %d\n", cfg.Port)
-	fmt.Printf("  Code:     %s\n", FormatToken(cfg.Token))
+	fmt.Printf("  Code:     %s\n", code)
 	fmt.Println()
 	fmt.Println("  The dashes and the case do not matter when you type it.")
 	fmt.Println("  Keep the code to yourself: anyone with it can plug their own USB")
@@ -272,6 +323,9 @@ func cmdUninstall() {
 		}
 	}
 	for _, a := range uninstallService() {
+		fmt.Println("-", a)
+	}
+	for _, a := range removeFromPath() {
 		fmt.Println("-", a)
 	}
 	closeFirewall(cfg.Port)
@@ -312,15 +366,15 @@ func cmdTestSigning(arg string) {
 		}
 		fmt.Println("Test signing disabled.  Reboot for it to take effect.")
 	default:
-		die("usage: moonlight-os-host-utils testsigning on|off")
+		die("usage: mlos-host-utils testsigning on|off")
 	}
 }
 
 func exeName() string {
 	if runtime.GOOS == "windows" {
-		return "moonlight-os-host-utils.exe"
+		return "mlos-host-utils.exe"
 	}
-	return "moonlight-os-host-utils"
+	return "mlos-host-utils"
 }
 
 func listening(port int) bool {

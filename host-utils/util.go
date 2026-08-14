@@ -49,7 +49,11 @@ func output(name string, args ...string) (string, error) {
 }
 
 func die(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "moonlight-os-host-utils: "+format+"\n", args...)
+	fmt.Fprintf(os.Stderr, "mlos-host-utils: "+format+"\n", args...)
+	if wizardMode {
+		// Double-clicked, so stderr is a window that is about to close.
+		pause("\nPress Enter to close this window.")
+	}
 	os.Exit(1)
 }
 

@@ -15,7 +15,7 @@
 #   SSH_KEYS=auto|none|<path>  which public keys may log in over SSH.
 #                              auto takes ~/.ssh/*.pub from this machine.
 #   MLOS_SUITE=trixie          Debian release to base on
-#   HOST_UTILS=amd64|all|none  which moonlight-os-host-utils builds to carry
+#   HOST_UTILS=amd64|all|none  which mlos-host-utils builds to carry
 #                              on the ISO for copying to the host PC
 #   INCREMENTAL=1              reuse the existing chroot (fast, but silently
 #                              ignores any config change -- debugging only)
@@ -158,7 +158,7 @@ fetch_tailscale() {
 # amd64 is the default because a host PC is one, and shipping the arm64
 # builds as well doubles this for a case nobody has yet.
 build_host_utils() {
-	local dest="$HERE/config/includes.chroot/opt/moonlight-os-host-utils"
+	local dest="$HERE/config/includes.chroot/opt/mlos-host-utils"
 	rm -rf "$dest"
 
 	if [[ "$HOST_UTILS" == "none" ]]; then
@@ -172,7 +172,7 @@ build_host_utils() {
 	local version
 	version="$(date +%Y.%m.%d)"
 
-	say "Building moonlight-os-host-utils $version ($HOST_UTILS)"
+	say "Building mlos-host-utils $version ($HOST_UTILS)"
 	mkdir -p "$dest" "$HERE/cache/go-build" "$HERE/cache/go-mod"
 
 	# Built in the container so the toolchain is not a requirement for
@@ -193,7 +193,7 @@ build_host_utils() {
 			go test ./...
 			for t in $targets; do
 				os=\${t%/*}; arch=\${t#*/}
-				name=moonlight-os-host-utils-\$os-\$arch
+				name=mlos-host-utils-\$os-\$arch
 				[ \"\$os\" = windows ] && name=\$name.exe
 				GOOS=\$os GOARCH=\$arch go build -trimpath \
 					-ldflags '-s -w -X main.Version=$version' \
@@ -202,7 +202,7 @@ build_host_utils() {
 			cp README.md /out/README.md
 			chmod -R a+rX /out
 			chown -R \$HOST_UID:\$HOST_GID /out
-		" || die "could not build moonlight-os-host-utils"
+		" || die "could not build mlos-host-utils"
 
 	say "Host utils: $(du -sh "$dest" | cut -f1) staged for the ISO"
 }
@@ -322,7 +322,7 @@ do_clean() {
 	       "$HERE/config/includes.chroot/usr/sbin/tailscaled" \
 	       "$HERE/config/includes.chroot/etc/systemd/system/tailscaled.service" \
 	       "$HERE/config/includes.chroot/etc/default/tailscaled" \
-	       "$HERE/config/includes.chroot/opt/moonlight-os-host-utils"
+	       "$HERE/config/includes.chroot/opt/mlos-host-utils"
 	say "Cleaned (cache/ kept)"
 }
 

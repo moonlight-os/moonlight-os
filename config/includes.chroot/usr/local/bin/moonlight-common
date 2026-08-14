@@ -31,7 +31,7 @@ mlos_load() {
 	NATURAL_SCROLL="no"
 	BATTERY_WARN="yes"
 	BATTERY_LEVELS="20 10 5"
-	# USB passthrough to a host PC running moonlight-os-host-utils.
+	# USB passthrough to a host PC running mlos-host-utils.
 	USB_AUTOSHARE="no"
 	USB_AUTOSHARE_POLICY="safe"
 	USB_AUTOSHARE_INCLUDE=""

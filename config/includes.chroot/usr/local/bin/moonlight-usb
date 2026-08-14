@@ -10,7 +10,7 @@
 # There are two ways to do that, and the difference is only in who runs the
 # other half:
 #
-#   Paired    moonlight-os-host-utils is installed on the host PC.  Sharing
+#   Paired    mlos-host-utils is installed on the host PC.  Sharing
 #             a device here makes it appear there, and unplugging it takes it
 #             away, with nothing to type at that end.  Turn on automatic
 #             sharing and even the sharing is not a decision any more.
@@ -67,17 +67,21 @@ normalise_code() {
 
 pair_menu() {
 	whiptail --title "Pair the host PC" --msgbox \
-"On the host PC, download moonlight-os-host-utils and run it once:
+"On the host PC, install mlos-host-utils and run it once:
 
-  Windows   in an Administrator PowerShell:
-            .\\moonlight-os-host-utils-windows-amd64.exe install
+  Windows   winget install MopigamesYT.MlosHostUtils
+            then, in an Administrator terminal:
+            mlos-host-utils install
 
-  Linux     sudo ./moonlight-os-host-utils-linux-amd64 install
+            Or download the .exe and double-click it -- it
+            walks you through the same thing.
 
-It prints an address and a four-group code.  Type those in next." 18 74 || return 1
+  Linux     sudo ./mlos-host-utils-linux-amd64 install
+
+It prints an address and a four-group code.  Type those in next." 20 74 || return 1
 
 	addr=$(whiptail --title "Host PC address" --inputbox \
-"Address of the host PC, as moonlight-os-host-utils printed it.
+"Address of the host PC, as mlos-host-utils printed it.
 
 A tailnet address works from anywhere; a LAN address only at home.
 Add :port only if you changed it from 48020." \
@@ -95,7 +99,7 @@ Add :port only if you changed it from 48020." \
 	esac
 
 	code=$(whiptail --title "Pairing code" --inputbox \
-"The code moonlight-os-host-utils printed, for example
+"The code mlos-host-utils printed, for example
 
     S95G-234X-0H8A-K602
 
@@ -140,7 +144,7 @@ toggle_auto() {
 	fi
 
 	if ! paired; then
-		mlos_yesno "No host PC is paired yet.\n\nAutomatic sharing needs moonlight-os-host-utils running on it.  Pair one now?" \
+		mlos_yesno "No host PC is paired yet.\n\nAutomatic sharing needs mlos-host-utils running on it.  Pair one now?" \
 			|| return
 		pair_menu || return
 	fi
@@ -327,7 +331,7 @@ host_address() {
 windows_cmd() { printf 'usbip.exe attach -r %s -b %s' "$(host_address "$2")" "$1"; }
 linux_cmd()   { printf 'usbip attach -r %s -b %s'     "$(host_address "$2")" "$1"; }
 
-HOSTUTILS_DIR=/opt/moonlight-os-host-utils
+HOSTUTILS_DIR=/opt/mlos-host-utils
 
 # Getting the agent onto the host PC is the one step that cannot happen
 # from here, so the ISO carries the binaries and this hands them over on a
@@ -374,7 +378,7 @@ Download the file for that machine:
 
 Then run it once, as Administrator or with sudo:
 
-    moonlight-os-host-utils... install
+    mlos-host-utils... install
 
 It prints an address and a code -- bring those back here.
 
@@ -390,7 +394,7 @@ setup_help() {
 	{
 		printf 'Setting up the host PC\n'
 		printf '========================\n\n'
-		printf 'The easy way -- moonlight-os-host-utils\n'
+		printf 'The easy way -- mlos-host-utils\n'
 		printf -- '---------------------------------------\n\n'
 		printf 'One binary, Windows or Linux, no dependencies.  It installs a\n'
 		printf 'USB/IP client if the PC has none, starts itself at boot, and\n'
@@ -399,9 +403,9 @@ setup_help() {
 		printf 'which serves it over the network for as long as the box is up.\n'
 		printf 'Then, on that machine:\n\n'
 		printf '  Windows, in an Administrator PowerShell:\n'
-		printf '      .\\moonlight-os-host-utils-windows-amd64.exe install\n\n'
+		printf '      .\\mlos-host-utils-windows-amd64.exe install\n\n'
 		printf '  Linux:\n'
-		printf '      sudo ./moonlight-os-host-utils-linux-amd64 install\n\n'
+		printf '      sudo ./mlos-host-utils-linux-amd64 install\n\n'
 		printf 'It prints an address and a code.  Bring those back here and use\n'
 		printf '"Pair the host PC".  After that, plugging a wheel into this\n'
 		printf 'machine is the whole procedure.\n\n'

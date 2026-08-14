@@ -31,7 +31,7 @@
 # --- payloads staged into the image tree --------------------------------
 # Downloaded or built by build.sh, not authored here.
 /config/includes.chroot/opt/moonlight/
-/config/includes.chroot/opt/moonlight-os-host-utils/
+/config/includes.chroot/opt/mlos-host-utils/
 /config/includes.chroot/usr/bin/tailscale
 /config/includes.chroot/usr/bin/.tailscale-version
 /config/includes.chroot/usr/sbin/tailscaled
