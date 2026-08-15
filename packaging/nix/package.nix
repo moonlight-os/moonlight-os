@@ -1,10 +1,10 @@
-# Ready to drop into nixpkgs as pkgs/by-name/ml/mlos-host-utils/package.nix.
+# The derivation, shipped through the Nix User Repository (see nur.nix) and
+# built from this checkout by the flake at the repository root.
 #
-# Nothing here is templated, unlike the winget and AUR manifests: a nixpkgs
-# package is updated by a reviewed pull request, not by our CI, so the version
-# and hash in this file are real values.  `packaging/nix/update.sh <tag>`
-# bumps both, and passthru.updateScript lets nixpkgs' own update bot do it
-# once the package is in the tree.
+# Nothing here is templated, unlike the winget and AUR manifests: NUR
+# evaluates this file as it stands at a commit, so the version and hash are
+# real values.  `packaging/nix/update.sh <tag>` bumps both, and CI runs it on
+# every tag.
 {
   lib,
   buildGoModule,

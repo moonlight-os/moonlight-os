@@ -268,7 +268,8 @@ nix run github:MopigamesYT/moonlight-os#mlos-host-utils -- pair   # Nix
 ```
 
 then `mlos-host-utils install`, elevated. (On NixOS, don't — enable
-`services.mlos-host-utils` instead; see [`packaging/nix`](packaging/nix).)
+`services.mlos-host-utils` instead, from this flake or from the NUR as
+`nur.repos.mopigamesyt`; see [`packaging/nix`](packaging/nix).)
 
 Otherwise the ISO carries the agent. **Devices & input → USB passthrough →
 Download the agent on the host PC** serves it over the network for as long as

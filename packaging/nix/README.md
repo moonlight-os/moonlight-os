@@ -1,32 +1,41 @@
 # Nix packaging
 
-Two files, for two audiences:
+Three files, for three audiences:
 
-- **`package.nix`** — the derivation, ready to drop into nixpkgs as
-  `pkgs/by-name/ml/mlos-host-utils/package.nix`.
+- **`package.nix`** — the derivation.
 - **`module.nix`** — the NixOS module, `services.mlos-host-utils`.
+- **`nur.nix`** — the entry point the [Nix User Repository][nur] evaluates.
 
-Both are reachable from the flake at the repository root, so they are usable
-today, without waiting on a nixpkgs review:
+All of them are reachable from the flake at the repository root as well:
 
 ```sh
 nix run github:MopigamesYT/moonlight-os#mlos-host-utils -- pair
 ```
 
-## On NixOS, use the module
+## Where this is published
 
-`mlos-host-utils install` is the wrong command here. It installs a usbip
-package with the system package manager, writes a unit into
-`/etc/systemd/system` and edits the firewall — and a `nixos-rebuild switch`
-takes back the parts NixOS considers its own. The binary knows it is on
-NixOS and says so rather than doing half of it.
+The NUR, not nixpkgs. nixpkgs closed the submission on maturity grounds —
+`pkgs/README.md` asks for a project that is established and likely to be
+long-lasting — and suggested the NUR in the meantime. That trade is fine:
+the NUR takes the package as it is, and it re-evaluates this repository
+every few hours instead of needing a reviewed pull request per release.
+
+If the project grows enough for nixpkgs to be worth another try, `package.nix`
+is still exactly what `pkgs/by-name/ml/mlos-host-utils/package.nix` would
+contain — `passthru.updateScript` and all.
+
+## Using it
+
+Non-flake, in `configuration.nix`:
 
 ```nix
 {
-  inputs.moonlight-os.url = "github:MopigamesYT/moonlight-os";
+  nixpkgs.config.packageOverrides = pkgs: {
+    nur = import (builtins.fetchTarball
+      "https://github.com/nix-community/NUR/archive/main.tar.gz") { inherit pkgs; };
+  };
 
-  # in configuration.nix
-  imports = [ inputs.moonlight-os.nixosModules.default ];
+  imports = [ pkgs.nur.repos.mopigamesyt.modules.mlos-host-utils ];
 
   services.mlos-host-utils = {
     enable = true;
@@ -35,8 +44,29 @@ NixOS and says so rather than doing half of it.
 }
 ```
 
-That loads `vhci-hcd`, runs the agent at boot with the right `usbip` on its
-path, and keeps the pairing code in `/var/lib/mlos-host-utils`.
+With flakes, take `nur.url = "github:nix-community/NUR"` as an input and
+import `nur.legacyPackages.${system}.repos.mopigamesyt.modules.mlos-host-utils`.
+Or skip the NUR entirely and use this flake directly:
+
+```nix
+{
+  inputs.moonlight-os.url = "github:MopigamesYT/moonlight-os";
+
+  # in configuration.nix
+  imports = [ inputs.moonlight-os.nixosModules.default ];
+}
+```
+
+Either way you get the agent at boot with the right `usbip` on its path,
+`vhci-hcd` loaded, and the pairing code kept in `/var/lib/mlos-host-utils`.
+
+## On NixOS, use the module
+
+`mlos-host-utils install` is the wrong command here. It installs a usbip
+package with the system package manager, writes a unit into
+`/etc/systemd/system` and edits the firewall — and a `nixos-rebuild switch`
+takes back the parts NixOS considers its own. The binary knows it is on
+NixOS and says so rather than doing half of it.
 
 `MLOS_HOST_UTILS_DIR` is set system-wide as well as on the unit, deliberately:
 the agent and the CLI have to read the same state directory, and if they do
@@ -47,12 +77,29 @@ running agent will reject — with nothing on screen to suggest why.
 the pairing code can attach USB devices from its own machine to this one, so
 opening it is a decision rather than a default.
 
-## Getting it into nixpkgs
+## Registering with the NUR (once)
 
-This is the one target CI cannot publish to — it is a reviewed pull request
-against someone else's repository. What CI does do, on every tag, is build
-the derivation and print the exact bumped `package.nix` in the run summary.
-Locally that is:
+A pull request against [nix-community/NUR][nur] adding this to `repos.json`:
+
+```json
+"mopigamesyt": {
+  "url": "https://github.com/MopigamesYT/moonlight-os",
+  "file": "packaging/nix/nur.nix"
+}
+```
+
+`file` is what keeps this out of a second repository: NUR defaults to
+`default.nix` at the root, and the root of this one is an ISO build.
+
+After that there is nothing to do per release. NUR re-evaluates the default
+branch on a schedule, so a release reaches users as soon as the version bump
+lands on `main`.
+
+## Per-release bumps
+
+CI does this: the `nix` job in `.github/workflows/host-utils.yml` runs
+`update.sh` on every tag and commits the result back to `main`, which is what
+the NUR then picks up. Locally the same thing is:
 
 ```sh
 ./update.sh v0.1.3          # rewrites version and hash, needs nix
@@ -62,5 +109,4 @@ The hash `fetchFromGitHub` wants is of the unpacked tree, not of a tarball,
 so unlike the AUR and winget checksums it cannot be worked out with
 `sha256sum` — it comes from `nix flake prefetch`.
 
-Once the package is in the tree, `passthru.updateScript` lets nixpkgs' own
-update bot do version bumps without anyone here doing anything.
+[nur]: https://github.com/nix-community/NUR

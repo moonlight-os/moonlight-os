@@ -260,13 +260,16 @@ jobs:
             echo "The built PKGBUILD and .SRCINFO are attached to this run as aur-pkgbuild."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # nixpkgs is the one target CI cannot publish to: it is a reviewed pull
-  # request against a repository with its own release process.  So this job
-  # does the half that can be automated -- proving the derivation still
-  # builds, and working out the version and hash the pull request needs.
+  # Nix ships through the NUR, which is not a place CI pushes to: NUR
+  # re-evaluates packaging/nix/nur.nix from this repository's default branch
+  # on its own schedule.  Publishing a release is therefore getting the bumped
+  # version and hash onto main, which is what this job does -- after proving
+  # the derivation and the NixOS module still evaluate.
   nix:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the tag build commits the version bump back to main
     defaults:
       run:
         shell: bash
@@ -285,19 +288,39 @@ jobs:
       - name: nix flake check
         run: nix flake check --print-build-logs
 
-      - name: Version and hash for the nixpkgs bump
+      - name: Point the NUR at this tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
+          # A tag build is checked out detached at the tag; the bump belongs
+          # on the branch NUR evaluates.
+          git fetch origin main
+          git checkout -B main origin/main
+
           packaging/nix/update.sh "${GITHUB_REF_NAME}"
+
+          if git diff --quiet -- packaging/nix/package.nix; then
+            echo "package.nix already points at ${GITHUB_REF_NAME}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The bumped file has to build before it is pushed: NUR evaluates
+          # main unattended, and a wrong hash there is a broken package for
+          # everyone until someone notices.  Through nur.nix rather than the
+          # flake, because that is the path NUR itself takes -- and it builds
+          # the released tarball, not this working tree.
+          nix-build packaging/nix/nur.nix -A mlos-host-utils --no-out-link
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packaging/nix/package.nix
+          git commit -m "nix: ${GITHUB_REF_NAME#v}"
+          git push origin HEAD:main
+
           {
-            echo '## nixpkgs'
+            echo '## NUR'
             echo
-            echo 'Open a pull request against NixOS/nixpkgs with this as'
-            echo '`pkgs/by-name/ml/mlos-host-utils/package.nix`:'
-            echo
-            echo '```nix'
-            cat packaging/nix/package.nix
-            echo '```'
+            echo "packaging/nix/package.nix now points at ${GITHUB_REF_NAME} on main;"
+            echo 'the NUR picks it up on its next evaluation.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
