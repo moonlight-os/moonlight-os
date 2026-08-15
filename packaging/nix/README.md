@@ -1,5 +1,9 @@
 # Nix packaging
 
+These files are MIT licensed (`LICENSE`, here), which is what the NUR asks of
+what it evaluates. The agent itself, and the rest of the repository, stay
+under the MPL-2.0 at the root.
+
 Three files, for three audiences:
 
 - **`package.nix`** — the derivation.

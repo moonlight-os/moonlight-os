@@ -8,12 +8,16 @@ on:
     tags: ['v*']
     paths:
       - 'host-utils/**'
-      - 'packaging/winget/**'
+      - 'packaging/**'
+      - 'flake.nix'
+      - 'flake.lock'
       - '.github/workflows/host-utils.yml'
   pull_request:
     paths:
       - 'host-utils/**'
-      - 'packaging/winget/**'
+      - 'packaging/**'
+      - 'flake.nix'
+      - 'flake.lock'
       - '.github/workflows/host-utils.yml'
   workflow_dispatch:
 
