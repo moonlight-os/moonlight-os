@@ -748,11 +748,17 @@ Some of these are non-obvious, and a couple were found the hard way:
   `config/packages.chroot/`. Upstream Moonlight ships x86 as an AppImage only
   (its Cloudsmith apt repo publishes arm64, armhf and riscv64 — the amd64
   `Packages` file is empty), and that AppImage carried a second copy of Qt,
-  SDL, FFmpeg and libva. Building natively drops all of it and removed two
-  standing hacks: the `LIBVA_DRIVERS_PATH` override, which existed because the
-  bundled libva was built against a different prefix, and the `pkill -x AppRun`
-  restart fallback, which matched a name belonging to the AppImage runtime
-  rather than to the client.
+  SDL, FFmpeg and libva.
+
+  This is **not** a size win, which is worth stating plainly because it looks
+  like it should be. Dropping the 145 MB AppImage means the image has to carry
+  Debian's Qt6 (46 MB) and its QML modules instead, and after squashfs the ISO
+  lands about 13 MB *larger* than the AppImage build. What it buys is
+  correctness: the client links the same libva, Mesa and FFmpeg as everything
+  else in the image, which removed two standing hacks — the
+  `LIBVA_DRIVERS_PATH` override, needed because the bundled libva was built
+  against a different prefix, and the `pkill -x AppRun` restart fallback, which
+  matched a name belonging to the AppImage runtime rather than to the client.
 
 - **`libgpg-error0` is not optional.** `libqxcb.so` pulls in `libgcrypt` →
   `libgpg-error`, and Debian doesn't install the latter by default under
