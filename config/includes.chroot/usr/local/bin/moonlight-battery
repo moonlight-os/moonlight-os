@@ -84,7 +84,7 @@ warn() {
 watch() {
 	mlos_load
 	[ "${BATTERY_WARN:-yes}" = "yes" ] || { log "warnings off"; return 0; }
-	[ -n "${DISPLAY:-}" ] || return 0
+	[ -n "${WAYLAND_DISPLAY:-}" ] || return 0
 
 	lowest="$(levels | tail -1)"
 
@@ -97,11 +97,11 @@ watch() {
 	while :; do
 		sleep "$INTERVAL"
 
-		# The X server going away takes the session with it, and this
-		# watcher along with it.  Checked against the server rather
-		# than the battery: /sys does not stop existing when X dies,
-		# and a warner with nowhere to draw is just a wakeup timer.
-		xset q >/dev/null 2>&1 || return 0
+		# The compositor going away takes the session with it, and this
+		# watcher along with it.  Checked against the compositor rather
+		# than the battery: /sys does not stop existing when the session
+		# ends, and a warner with nowhere to draw is just a wakeup timer.
+		swaymsg -t get_version >/dev/null 2>&1 || return 0
 		[ -d "$BAT" ] || return 0
 		p="$(percent)"
 		case "$p" in ''|*[!0-9]*) continue ;; esac

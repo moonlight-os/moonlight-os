@@ -4,7 +4,7 @@
 # Two ways in:
 #   * on the console, whenever Moonlight exits (moonlight-session runs it)
 #   * over the top of a running Moonlight, via Ctrl+Alt+M (moonlight-panel
-#     runs it with --in-x)
+#     runs it with --in-session)
 #
 # The second form is the important one: without it the only way to reach the
 # installer was to quit Moonlight first, which is neither obvious nor possible
@@ -18,8 +18,8 @@
 # shellcheck source=./moonlight-common
 . /usr/local/bin/moonlight-common
 
-IN_X=0
-[ "${1:-}" = "--in-x" ] && IN_X=1
+IN_SESSION=0
+[ "${1:-}" = "--in-session" ] && IN_SESSION=1
 
 sq() {
 	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
@@ -31,7 +31,7 @@ have_tailscale() { [ -x /usr/bin/tailscale ]; }
 # Settings Moonlight only reads at start-up need it restarted.  On the console
 # that happens anyway when the menu exits; in X we can do it in place.
 restart_prompt() {
-	if [ "$IN_X" = "1" ]; then
+	if [ "$IN_SESSION" = "1" ]; then
 		if mlos_yesno "Saved.\n\nRestart Moonlight now to apply it?"; then
 			mlos_restart_moonlight
 			exit 0
@@ -138,7 +138,7 @@ devices_menu() {
 			usb)       moonlight-usb ;;
 			trackpad)  moonlight-input --menu ;;
 			region)    moonlight-region --menu
-			           [ "$IN_X" = "1" ] && moonlight-region --apply-x ;;
+			           [ "$IN_SESSION" = "1" ] && moonlight-region --apply-session ;;
 			battery)   battery_menu ;;
 			back)      return 0 ;;
 		esac
@@ -162,7 +162,7 @@ battery_menu() {
 		entries="$entries levels $(sq 'Levels to warn at')"
 		# Nothing to draw on from the console; the OSD needs the
 		# running X session that the stream lives in.
-		if [ "$IN_X" = "1" ]; then
+		if [ "$IN_SESSION" = "1" ]; then
 			entries="$entries test $(sq 'Show a test warning now')"
 		fi
 		entries="$entries back $(sq 'Back')"
@@ -262,7 +262,7 @@ Battery: $bat" ;;
 
 	# Entries are tagged by name so the ones that only make sense in some
 	# situations can come and go without renumbering everything.
-	if [ "$IN_X" = "1" ]; then
+	if [ "$IN_SESSION" = "1" ]; then
 		entries="start $(sq 'Back to Moonlight')"
 		entries="$entries restart $(sq 'Restart Moonlight')"
 	else
@@ -285,7 +285,7 @@ Battery: $bat" ;;
 		stream)    stream_menu ;;
 		displays)  moonlight-displays --menu
 		           # In X the new layout can be applied straight away.
-		           [ "$IN_X" = "1" ] && moonlight-displays --apply ;;
+		           [ "$IN_SESSION" = "1" ] && moonlight-displays --apply ;;
 		audio)     moonlight-audio ;;
 		devices)   devices_menu ;;
 		network)   network_menu ;;

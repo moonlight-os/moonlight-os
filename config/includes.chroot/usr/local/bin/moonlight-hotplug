@@ -3,37 +3,47 @@
 #
 # This is a laptop appliance: it gets carried to a monitor, plugged in, and
 # carried away again, and none of that should need a menu.  Started by
-# moonlight-xsession and dies with the session.
+# moonlight-wlsession and dies with the session.
+#
+# This used to poll, and the polling was expensive in a way that took a long
+# time to find.  Recorded here because the reasoning is still worth having:
+#
+#   A plain "xrandr --query" asks the X server to re-probe every connector --
+#   a DDC transaction per output.  On a machine with one panel and six dead
+#   DP/HDMI connectors, all six had to time out before the call returned, and
+#   the X server is single-threaded, so that was the whole display frozen.
+#   Measured at 200 ms per call, once every 2 seconds, for the life of the
+#   session: during a stream it read as a regular half-second stutter every
+#   few seconds, and looked exactly like a network fault.  The fix was
+#   --current, which reads the state the server already holds rather than
+#   re-probing.
+#
+# None of that applies now.  The compositor publishes an event when outputs
+# change, so this waits on that event instead of asking anything: no interval,
+# no probing, and no cost at all while nothing is happening.  The kernel's DRM
+# uevent is what discovers a hotplug either way -- polling was only ever a way
+# to notice that it had.
 #
 # shellcheck source=./moonlight-common
 . /usr/local/bin/moonlight-common
 
-[ -n "${DISPLAY:-}" ] || exit 0
+[ -n "${WAYLAND_DISPLAY:-}" ] || exit 0
 
-INTERVAL="${MLOS_HOTPLUG_INTERVAL:-2}"
-
-# Just the names and their connected/disconnected state -- resolution changes
-# made from the menu must not look like a hotplug and start a loop.
-#
-# --current is load-bearing, not a micro-optimisation.  A plain "xrandr
-# --query" asks the server to re-probe every connector, which means a DDC
-# transaction per output; on a machine with one panel and six dead DP/HDMI
-# connectors those six all have to time out before the call returns.  The X
-# server is single-threaded, so that is the whole display frozen -- measured
-# at 200 ms per call on the Miix, once every INTERVAL seconds, for as long as
-# the session is up.  During a stream that reads as a regular half-second
-# stutter every few seconds, and it looks exactly like a network fault, which
-# is where the hunt for it started.
-#
-# --current reads the state the server already holds instead of re-probing
-# (XRRGetScreenResourcesCurrent rather than XRRGetScreenResources): 33x
-# cheaper here, 3 jiffies against 100 for the same five calls.  It still sees
-# hotplugs, because it is not the polling that discovers them -- the kernel
-# raises a DRM uevent, the modesetting driver handles it and updates the
-# server's own view, and this loop is only here to notice that it changed.
+# Just the names and whether each is active -- resolution changes made from
+# the menu must not look like a hotplug and start a loop.  This matters more
+# here than it did when polling, because applying a layout itself produces an
+# output event: without comparing state, reacting to our own change would
+# loop forever.
 state() {
-	xrandr --query --current 2>/dev/null \
-		| awk '/ connected| disconnected/ {print $1, $2}'
+	swaymsg -t get_outputs -r 2>/dev/null | python3 -c '
+import json, sys
+try:
+    outs = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for o in sorted(outs, key=lambda o: o.get("name") or ""):
+    print(o.get("name"), "active" if o.get("active") else "inactive")
+'
 }
 
 log() {
@@ -42,11 +52,13 @@ log() {
 
 last="$(state)"
 
-while :; do
-	sleep "$INTERVAL"
+# -m keeps the subscription open and prints one line per event.  When the
+# compositor goes away the pipe closes and the loop ends, which is how this
+# dies with the session.
+swaymsg -t subscribe -m '["output"]' 2>/dev/null | while read -r _event; do
 	now="$(state)"
 
-	# An empty read means the X server went away; so should we.
+	# An empty read means the compositor went away; so should we.
 	[ -n "$now" ] || exit 0
 	[ "$now" = "$last" ] && continue
 
@@ -67,11 +79,11 @@ while :; do
 	after="$(cat "$MLOS_STATE/current-output" 2>/dev/null)"
 	if [ "$after" != "$before" ]; then
 		# Either the screen it was drawing on went away, or the one you
-		# actually asked for came back.  Moonlight picks its display once,
+		# actually asked for came back.  The client picks its display once,
 		# at start-up, so it has to be restarted to follow.
-		log "moonlight moving from ${before:-none} to ${after:-none}, restarting it"
+		log "client moving from ${before:-none} to ${after:-none}, restarting it"
 		mlos_restart_moonlight
 	else
-		log "layout reapplied, moonlight stays on ${after:-auto}"
+		log "layout reapplied, client stays on ${after:-auto}"
 	fi
 done

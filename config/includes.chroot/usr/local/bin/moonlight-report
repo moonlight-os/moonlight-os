@@ -9,10 +9,14 @@
 
 mlos_load
 
-# Run over SSH there is no display in the environment, and vainfo, vulkaninfo
-# and xrandr all quietly report nothing useful without one.
-export DISPLAY="${DISPLAY:-:0}"
-export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+# Run over SSH there is no session in the environment, and vainfo, vulkaninfo
+# and swaymsg all quietly report nothing useful without one.  The compositor
+# puts its socket here, so point at the running session's.
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+	export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u moonlight 2>/dev/null || id -u)}"
+	sock=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -name 'wayland-*' ! -name '*.lock' 2>/dev/null | head -1)
+	[ -n "$sock" ] && export WAYLAND_DISPLAY="${sock##*/}"
+fi
 
 sec() { printf '\n===== %s =====\n' "$1"; }
 
@@ -43,7 +47,7 @@ sec "Render nodes"
 ls -l /dev/dri/ 2>/dev/null || printf '/dev/dri missing\n'
 
 sec "Displays (live)"
-DISPLAY=:0 xrandr --verbose 2>&1 | grep -vE '^\s+(h|v):' | head -80
+swaymsg -t get_outputs 2>&1 | head -120
 
 sec "Displays (snapshot taken at session start)"
 cat "$MLOS_SNAPSHOT" 2>/dev/null || printf '(none)\n'

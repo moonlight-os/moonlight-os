@@ -64,9 +64,23 @@ frames than it can show buys nothing." 16 74 4 \
 }
 
 refresh_hz() {
-	[ -n "${DISPLAY:-}" ] || { printf '?'; return; }
-	xrandr --query 2>/dev/null \
-		| awk '/\*/ { for (i = 1; i <= NF; i++) if ($i ~ /\*/) { gsub(/[*+]/, "", $i); printf "%d", $i; exit } }'
+	[ -n "${WAYLAND_DISPLAY:-}" ] || { printf '?'; return; }
+	# xrandr marked the active mode with an asterisk in free text; sway
+	# reports it outright, in mHz.
+	swaymsg -t get_outputs -r 2>/dev/null | MLOS_WANT="${MOONLIGHT_OUTPUT:-}" python3 -c '
+import json, os, sys
+try:
+    outs = [o for o in json.load(sys.stdin) if o.get("active")]
+except Exception:
+    sys.exit(0)
+if not outs:
+    sys.exit(0)
+want = os.environ.get("MLOS_WANT") or ""
+chosen = next((o for o in outs if o.get("name") == want), outs[0])
+m = chosen.get("current_mode") or {}
+if m.get("refresh"):
+    print("%d" % round(m["refresh"] / 1000.0), end="")
+' || printf '?'
 }
 
 bitrate_menu() {

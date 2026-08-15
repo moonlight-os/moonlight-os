@@ -1,5 +1,0 @@
-#!/bin/sh
-# Run by triggerhappy, as root, with no environment to speak of.  Hands off
-# to the session user with a display attached.
-exec su -l moonlight -c \
-	'DISPLAY=:0 XAUTHORITY=/home/moonlight/.Xauthority /usr/local/bin/moonlight-panel'

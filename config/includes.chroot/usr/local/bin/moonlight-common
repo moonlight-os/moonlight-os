@@ -170,37 +170,83 @@ mlos_qt_del() {
 	rm -f "$tmp"
 }
 
-# Current mode of the screen Moonlight will open on, as "1920x1080".  Taken
-# from the geometry on the output's own line, which is the resolution the
-# screen is actually running at right now.  Empty if X is not up.
+# Current mode of the screen the client will open on, as "1920x1080".  Empty
+# if the compositor is not up.
+#
+# This was the awk-parsed xrandr the migration was partly for: three rules
+# picking a geometry field out of free text, with a fallback branch because
+# xrandr marks a primary output and the parse had to cope with there not being
+# one.  sway reports the active outputs as JSON, and has no notion of primary
+# at all -- the appliance's own MOONLIGHT_OUTPUT is the answer to that
+# question, so it is asked directly.
 mlos_screen_mode() {
-	[ -n "${DISPLAY:-}" ] || return 0
-	xrandr --query 2>/dev/null | awk '
-		/ connected primary / && !done {
-			for (i = 1; i <= NF; i++)
-				if ($i ~ /^[0-9]+x[0-9]+\+/) { split($i, a, "+"); print a[1]; done = 1; exit }
-		}
-		/ connected / && !done && !/disconnected/ {
-			for (i = 1; i <= NF; i++)
-				if ($i ~ /^[0-9]+x[0-9]+\+/) { split($i, a, "+"); fallback = a[1] }
-		}
-		END { if (!done && fallback != "") print fallback }
-	'
+	[ -n "${WAYLAND_DISPLAY:-}" ] || return 0
+	swaymsg -t get_outputs -r 2>/dev/null | MLOS_WANT="${MOONLIGHT_OUTPUT:-}" python3 -c '
+import json, os, sys
+try:
+    outs = [o for o in json.load(sys.stdin) if o.get("active")]
+except Exception:
+    sys.exit(0)
+if not outs:
+    sys.exit(0)
+want = os.environ.get("MLOS_WANT") or ""
+chosen = next((o for o in outs if o.get("name") == want), outs[0])
+r = chosen.get("rect") or {}
+w, h = r.get("width"), r.get("height")
+if w and h:
+    print("%dx%d" % (w, h))
+'
 }
 
-# Put text on this machine's clipboard.  Only possible inside X, and xclip
-# has to keep running to own the selection -- it backgrounds itself for that.
+# Put text on this machine's clipboard.  Only possible inside the graphical
+# session: wl-copy needs a compositor to own the selection against.
+#
+# wl-copy daemonises itself to keep owning it, exactly as xclip did -- a
+# Wayland selection belongs to a live client, so nothing can hand it over and
+# exit.
 mlos_clip() {
-	[ -n "${DISPLAY:-}" ] || return 1
-	command -v xclip >/dev/null 2>&1 || return 1
-	printf '%s' "$1" | xclip -selection clipboard >/dev/null 2>&1 || return 1
-	printf '%s' "$1" | xclip -selection primary >/dev/null 2>&1 || true
+	[ -n "${WAYLAND_DISPLAY:-}" ] || return 1
+	command -v wl-copy >/dev/null 2>&1 || return 1
+	printf '%s' "$1" | wl-copy >/dev/null 2>&1 || return 1
+	printf '%s' "$1" | wl-copy --primary >/dev/null 2>&1 || true
 	return 0
 }
 
-# True when we are running inside the X session rather than on the console.
-mlos_in_x() {
-	[ -n "${DISPLAY:-}" ] && command -v xdotool >/dev/null 2>&1
+# True when we are running inside the graphical session rather than on the
+# console.  WAYLAND_DISPLAY is set by the compositor for everything it starts,
+# which is exactly the set of things that can talk to it.
+mlos_in_session() {
+	[ -n "${WAYLAND_DISPLAY:-}" ] && command -v swaymsg >/dev/null 2>&1
+}
+
+# Start the compositor.  sway execs the session itself (/etc/sway/config), so
+# this blocks until the whole graphical session is over.
+#
+# The environment is set here rather than in the sway config because a sway
+# config cannot export anything to processes it did not start, and some of
+# these are read by the client's libraries at load time.
+mlos_run_compositor() {
+	# Wayland-native everywhere.  Qt would otherwise pick xcb and find no X
+	# server -- and SDL, which draws the actual stream, would do the same.
+	# Both fall back silently to something worse rather than failing loudly.
+	export XDG_SESSION_TYPE=wayland
+	export XDG_CURRENT_DESKTOP=sway
+	export QT_QPA_PLATFORM=wayland
+	export SDL_VIDEODRIVER=wayland
+	# Qt's own scaling stays off: the display menu decides resolution, and
+	# a compositor-side scale would be applied on top of it.
+	export QT_AUTO_SCREEN_SCALE_FACTOR=0
+
+	# wlroots builds its keymap from these at startup.  Setting them here
+	# rather than only calling `swaymsg input` afterwards means the layout is
+	# right for the very first keypress -- including Ctrl+Alt+M, which is
+	# bound by position but still needs a keymap to exist.
+	if [ -n "${KEYBOARD_LAYOUT:-}" ]; then
+		export XKB_DEFAULT_LAYOUT="$KEYBOARD_LAYOUT"
+		[ -n "${KEYBOARD_VARIANT:-}" ] && export XKB_DEFAULT_VARIANT="$KEYBOARD_VARIANT"
+	fi
+	exec_sway=$(command -v sway) || return 1
+	"$exec_sway"
 }
 
 # Ask the running Moonlight to exit so the session loop starts it again with

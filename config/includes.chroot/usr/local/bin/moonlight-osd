@@ -3,11 +3,21 @@
 #
 #   moonlight-osd [-c colour] [-d seconds] LINE [LINE ...]
 #
-# osd_cat, specifically, because its window is override-redirect: openbox never
-# manages it, so it needs none of the layer juggling the Ctrl+Alt+M panel does
-# -- and, the part that matters, nothing has to take focus.  Moonlight is a
-# focused fullscreen window; taking focus away from it mid-stream to show a
-# warning would be worse than the warning.
+# The property that matters has not changed: nothing may take focus.  The
+# client is a focused fullscreen window, and stealing focus from it mid-stream
+# to show a warning would be worse than the warning.
+#
+# Under X11 this was osd_cat, whose window is override-redirect -- openbox
+# never managed it, so it needed none of the layer juggling the Ctrl+Alt+M
+# panel does.  There is no Wayland equivalent of override-redirect, and there
+# cannot be: a client cannot place itself above others.  What replaces it is
+# the layer-shell protocol, which is how notification daemons draw over
+# fullscreen windows without ever being focused.  mako speaks it, so the
+# message goes through the ordinary notification path.
+#
+# The font sizing that used to live here is gone with it: mako is configured
+# once (/etc/xdg/mako/config) rather than being told a pixel size per message,
+# and it scales with the output like every other Wayland surface.
 #
 # shellcheck source=./moonlight-common
 . /usr/local/bin/moonlight-common
@@ -27,57 +37,29 @@ while [ $# -gt 0 ]; do
 done
 [ $# -gt 0 ] || exit 0
 
-[ -n "${DISPLAY:-}" ] || export DISPLAY=:0
-command -v osd_cat >/dev/null 2>&1 || {
-	printf 'moonlight-osd: osd_cat is not installed\n' >&2
+[ -n "${WAYLAND_DISPLAY:-}" ] || exit 0
+command -v notify-send >/dev/null 2>&1 || {
+	printf 'moonlight-osd: notify-send is not installed\n' >&2
 	exit 1
 }
 
-# Scale the text to the screen it lands on.  A fixed size is either shouting
-# on a netbook or unreadable on a 4K panel, and this box is meant to be
-# carried between both.
-#
-# Nimbus Sans is a scalable Type1 core font, which arrives with the URW base35
-# set the Qt build already pulls in -- so any size works and no bitmap font
-# package is needed.  The X core font path is the one xosd can see; the
-# TrueType DejaVu the panel uses is only reachable through Xft.
-screen_height() {
-	h="$(mlos_screen_mode)"
-	h="${h#*x}"
-	case "$h" in ''|*[!0-9]*) h=1080 ;; esac
-	printf '%s' "$h"
-}
-
-h="$(screen_height)"
-size=$((h / 26))
-[ "$size" -lt 22 ] && size=22
-[ "$size" -gt 80 ] && size=80
-font="-*-nimbus sans l-bold-r-normal--$size-*-*-*-p-*-iso8859-1"
-
 # One message at a time.  A second warning arriving while the first is still
-# up would otherwise draw straight over it, and two half-legible overlapping
-# lines are worse than either alone.
-PIDFILE="$MLOS_STATE/osd.pid"
-old=$(cat "$PIDFILE" 2>/dev/null)
-[ -n "$old" ] && kill "$old" 2>/dev/null
-mkdir -p "$MLOS_STATE" 2>/dev/null || true
+# up would otherwise stack below it; replacing keeps the newest one where the
+# eye already is.  A fixed tag is how the notification protocol expresses
+# "this supersedes the last one".
+#
+# The colour is carried as an urgency rather than an RGB value: mako styles by
+# urgency, and the two callers only ever wanted "warning" and "worse".
+case "$colour" in
+	'#ff0000'|red)  urgency=critical ;;
+	*)              urgency=normal ;;
+esac
 
-# The font is the one thing here that can be missing on a stripped image, and
-# osd_cat answers that by drawing nothing at all.  "fixed" is compiled into
-# the X server itself, so the fallback cannot fail the same way -- small and
-# ugly beats a warning that never appears.
-(
-	if ! printf '%s\n' "$@" | osd_cat \
-		-p top -A center -o "$((h / 12))" \
-		-f "$font" -c "$colour" \
-		-O 2 -u black -s 2 -S black \
-		-d "$seconds" -l $# 2>/dev/null
-	then
-		printf '%s\n' "$@" | osd_cat \
-			-p top -A center -o 40 -f fixed -c "$colour" \
-			-d "$seconds" -l $# 2>/dev/null || true
-	fi
-	rm -f "$PIDFILE"
-) &
+body=$(printf '%s\n' "$@")
 
-echo $! > "$PIDFILE" 2>/dev/null || true
+notify-send \
+	--app-name=moonlight-os \
+	--urgency="$urgency" \
+	--expire-time="$((seconds * 1000))" \
+	--hint=string:x-canonical-private-synchronous:moonlight-osd \
+	"$body" >/dev/null 2>&1 || true

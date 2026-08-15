@@ -4,7 +4,7 @@
 #   moonlight-region --first-run   run once, before anything asks for typing
 #   moonlight-region --keyboard    just the layout, without the clock or the flag
 #   moonlight-region --menu        change it later
-#   moonlight-region --apply-x     apply the layout to a running X server
+#   moonlight-region --apply-session     apply the layout to the running compositor
 #
 # The keyboard has to be settled before the Wi-Fi prompt: on a non-US layout
 # every password typed at that prompt would otherwise come out wrong.
@@ -110,23 +110,13 @@ apply_keyboard() {
 	layout="$1"
 	variant="$2"
 
-	# Write X's keyboard config ourselves rather than trusting localectl to
-	# do it: Xorg reads this at startup, so the layout is right even if
-	# setxkbmap never runs.
-	mlos_root mkdir -p /etc/X11/xorg.conf.d
-	{
-		printf 'Section "InputClass"\n'
-		printf '\tIdentifier "system-keyboard"\n'
-		printf '\tMatchIsKeyboard "on"\n'
-		printf '\tOption "XkbLayout" "%s"\n' "$layout"
-		[ -n "$variant" ] && printf '\tOption "XkbVariant" "%s"\n' "$variant"
-		printf 'EndSection\n'
-	} | mlos_root tee /etc/X11/xorg.conf.d/00-keyboard.conf >/dev/null
-
-	mlos_root localectl set-x11-keymap "$layout" "" "$variant" 2>/dev/null || true
-
-	# Belt and braces: console-setup reads this directly, and it survives
-	# even if localed is unavailable.
+	# No xorg.conf.d InputClass any more: nothing reads it.  wlroots takes
+	# its keymap from the XKB_DEFAULT_* environment at compositor start (see
+	# mlos_run_compositor) and from `swaymsg input` afterwards, so the layout
+	# now travels through the config file below plus --apply-session.
+	#
+	# console-setup reads this directly, and it is also what makes the layout
+	# correct on the TTY before the compositor ever starts.
 	printf 'XKBMODEL="pc105"\nXKBLAYOUT="%s"\nXKBVARIANT="%s"\nXKBOPTIONS=""\nBACKSPACE="guess"\n' \
 		"$layout" "$variant" | mlos_root tee /etc/default/keyboard >/dev/null
 
@@ -249,19 +239,22 @@ Clock: $(date '+%Y-%m-%d %H:%M')" 18 74 3 \
 			esac
 		done
 		;;
-	--apply-x)
+	--apply-session)
 		mlos_load
 		[ -n "${KEYBOARD_LAYOUT:-}" ] || exit 0
-		# Passing an empty variant positionally makes setxkbmap fail to build
-		# a keymap at all, which silently leaves X on the default US layout.
+		# type:keyboard covers every keyboard the seat has now and any
+		# plugged in later, which is what the X version needed a separate
+		# per-device pass for.
+		swaymsg input type:keyboard xkb_layout "$KEYBOARD_LAYOUT" >/dev/null 2>&1 || true
+		# Setting an empty variant is not the same as not setting one: it
+		# is rejected, and sway then keeps the previous variant rather than
+		# clearing it -- so only send it when there is one.
 		if [ -n "${KEYBOARD_VARIANT:-}" ]; then
-			setxkbmap -layout "$KEYBOARD_LAYOUT" -variant "$KEYBOARD_VARIANT" || true
-		else
-			setxkbmap -layout "$KEYBOARD_LAYOUT" || true
+			swaymsg input type:keyboard xkb_variant "$KEYBOARD_VARIANT" >/dev/null 2>&1 || true
 		fi
 		;;
 	*)
-		printf 'usage: moonlight-region [--first-run|--keyboard|--menu|--apply-x]\n' >&2
+		printf 'usage: moonlight-region [--first-run|--keyboard|--menu|--apply-session]\n' >&2
 		exit 2
 		;;
 esac

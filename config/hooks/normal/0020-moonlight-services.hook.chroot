@@ -6,7 +6,7 @@ set -e
 systemctl set-default multi-user.target
 
 for svc in NetworkManager avahi-daemon usbipd systemd-timesyncd ssh \
-           bluetooth triggerhappy; do
+           bluetooth; do
 	systemctl enable "$svc" 2>/dev/null || true
 done
 
@@ -24,28 +24,6 @@ if [ -f /etc/systemd/system/tailscaled.service ]; then
 	systemctl enable tailscaled 2>/dev/null || true
 	install -d -m 0700 /var/lib/tailscale
 fi
-
-# Ctrl+Alt+M has to work with a USB keyboard, which means masking the socket
-# unit -- so read this before deciding it is redundant.
-#
-# thd learns about input devices two ways: a glob at start-up, and udev
-# handing it anything that appears later, through th-cmd and /run/thd.socket.
-# The glob only ever sees what already exists, and thd starts early, so on a
-# machine whose keyboard is a USB receiver the keyboard is not in it.  That
-# leaves the udev path, and the udev path is broken on Debian: th-cmd speaks
-# to the socket with SOCK_DGRAM, while triggerhappy.socket declares
-# ListenStream, so every hand-off fails with ENOTCONN and thd never hears
-# about the keyboard at all.
-#
-# It goes unnoticed on a laptop, where the built-in keyboard is on the i8042
-# bus and exists before thd starts, so the glob catches it and the broken
-# path is never used.  Plug the same image into a tablet with a wireless USB
-# keyboard and the settings menu simply has no hotkey.
-#
-# Masked, not disabled: with no socket passed to it, thd creates its own at
-# the same path, as a datagram socket, which is what th-cmd has always
-# expected.  The service still starts at boot from multi-user.target.
-systemctl mask triggerhappy.socket 2>/dev/null || true
 
 # Nothing here should ever run apt or rebuild indexes on an appliance.
 # wpa_supplicant is deliberately absent from this list: NetworkManager

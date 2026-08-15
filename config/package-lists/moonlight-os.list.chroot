@@ -104,11 +104,6 @@ zstd
 plymouth
 plymouth-themes
 
-## ---- hotkey daemon ---------------------------------------------------
-# Reads /dev/input directly, which is the only way to catch Ctrl+Alt+M while
-# Moonlight has the X keyboard grabbed for a stream.
-triggerhappy
-
 ## ---- USB passthrough + input ----------------------------------------
 usbip
 evtest
@@ -117,37 +112,31 @@ bluez
 # Without this a Bluetooth headset pairs and then produces no sound device.
 libspa-0.2-bluetooth
 
-## ---- X11 (Moonlight's Qt build is xcb-only, there is no wayland QPA) -
-xserver-xorg-core
-xserver-xorg-legacy
-xserver-xorg-input-libinput
-xserver-xorg-video-amdgpu
-xserver-xorg-video-intel
-xserver-xorg-video-nouveau
-xserver-xorg-video-fbdev
-xserver-xorg-video-vesa
-xinit
-x11-xserver-utils
-xdotool
-# Applies the trackpad scroll direction to devices that already exist, so it
-# does not need the X server restarted.
-xinput
+## ---- Wayland session -------------------------------------------------
+# sway is the whole graphical session: compositor, window manager and hotkey
+# daemon in one.  Under X11 that was Xorg plus openbox plus triggerhappy plus
+# xdotool, and the hotkey daemon existed only because a client holding the X
+# keyboard grab stopped the window manager from ever seeing Ctrl+Alt+M.  A
+# compositor binding is evaluated before the key reaches any client, so all of
+# that is gone.
+sway
+# The settings panel is whiptail in a terminal on top of the stream; foot is
+# the terminal, in place of xterm.
+foot
 # So the USB passthrough screen can put the command for the host PC on the
 # clipboard rather than making you copy it off the screen by eye.
-xclip
-openbox
-unclutter
-# The settings panel (Ctrl+Alt+M) is whiptail in a terminal on top of the
-# stream.  -fa/-fs make xterm use the TrueType font we already ship, so no
-# bitmap font package is needed.
-xterm
-# Low-battery warnings over the top of the stream.  osd_cat's window is
-# override-redirect, so it draws above a focused fullscreen Moonlight without
-# taking focus from it -- which is the whole trick, since stealing focus from
-# a running stream to show a warning would be worse than the warning.  It
-# renders with X core fonts, and the scalable Type1 set that arrives with
-# fonts-urw-base35 covers it, so no bitmap font package is needed here either.
-xosd-bin
+wl-clipboard
+# Low-battery warnings over the top of the stream.  This has to be a
+# layer-shell client: a Wayland client cannot place itself above others the
+# way osd_cat's override-redirect window could, and layer-shell is the
+# protocol that exists for exactly this.  Notifications go through it without
+# ever taking focus, which is the property that matters mid-stream.
+mako-notifier
+libnotify-bin
+# Qt's Wayland platform plugin.  Qt dlopens this, so nothing links against it
+# and no dependency resolver will pull it in -- and without it Qt finds no
+# usable platform and the client does not start at all.
+qt6-wayland
 
 ## ---- GPU / video decode ---------------------------------------------
 libgl1-mesa-dri
@@ -190,11 +179,11 @@ alsa-topology-conf
 pipewire-alsa
 
 ## ---- Qt platform plugin ----------------------------------------------
-# libqxcb.so -> libgcrypt -> libgpg-error.  Without this the Qt platform
-# plugin fails to load and the client never draws a window.  Since Selene
-# became a real package this arrives as a dependency of Debian's Qt rather
-# than being needed by a bundled copy -- named here so it stays true by
-# intent rather than by luck.
+# Qt's platform plugin pulls in libgcrypt -> libgpg-error, and Debian does not
+# install the latter by default under --no-install-recommends.  Without it Qt
+# loads no platform plugin and the client never draws a window.  It arrives as
+# a dependency of Debian's Qt rather than being needed by a bundled copy --
+# named here so it stays true by intent rather than by luck.
 libgpg-error0
 fonts-dejavu-core
 # Scalable Type1 core fonts.  Listed for moonlight-osd's sake: the low-battery

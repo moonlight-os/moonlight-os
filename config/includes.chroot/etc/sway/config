@@ -1,0 +1,77 @@
+# Moonlight OS compositor configuration.
+#
+# This is deliberately not sway's shipped default config: that one binds most
+# of the keyboard for a tiling desktop, and every one of those bindings would
+# be a key the streamed host PC never receives.  An appliance that forwards
+# almost the whole keyboard wants the opposite -- exactly one binding.
+#
+# sway is started by moonlight-session on tty1 after autologin.  There is no
+# display manager.
+
+### --- appearance ---------------------------------------------------------
+# Nothing here is ever meant to look like a desktop.  No decorations, no gaps,
+# no status bar: a single fullscreen client on a black background.
+default_border none
+default_floating_border none
+titlebar_border_thickness 0
+hide_edge_borders both
+font pango:DejaVu Sans 11
+
+output * bg #000000 solid_color
+
+# Replaces unclutter: the pointer disappears when it stops moving rather than
+# sitting over the stream.
+seat * hide_cursor 3000
+
+# A stream is not a desktop -- the pointer crossing a window edge should never
+# move focus away from what is being watched.
+focus_follows_mouse no
+
+### --- X11 ----------------------------------------------------------------
+# Off on purpose.  Selene is a native Wayland client (Qt's wayland QPA plus
+# SDL's wayland video driver), and nothing else in the image needs X, so
+# leaving Xwayland enabled would ship an X server to run nothing.
+#
+# If a future client turns out to need X, this is the single line to flip.
+xwayland disable
+
+### --- the settings panel -------------------------------------------------
+# The whole reason the X11 session had a triggerhappy daemon reading
+# /dev/input: while streaming, the client grabbed the X keyboard, so the
+# window manager never saw this combination and the panel could not be opened.
+#
+# A compositor binding is evaluated before the key reaches any client, so that
+# entire mechanism -- triggerhappy, its evdev rules, the setuid-ish hand-off
+# script, the iconify-to-drop-the-grab dance -- collapses into this one line.
+#
+# --to-code binds the physical key position rather than the letter, so this
+# still lands on the key labelled M under an AZERTY layout, where it would
+# otherwise be the semicolon.  That replaces the duplicated KEY_SEMICOLON
+# rules the evdev version needed.
+bindsym --to-code Ctrl+Alt+m exec /usr/local/bin/moonlight-panel
+
+# Panic exit, matching the old session's Ctrl+Alt+Shift+Q.
+bindsym --to-code Ctrl+Alt+Shift+q exit
+
+### --- window placement ---------------------------------------------------
+# The panel opens over a fullscreen stream, so it has to be in the same layer
+# or it would open behind and look like nothing happened.  Under X11 this took
+# an openbox rule plus xdotool raise calls; here it is a placement rule.
+for_window [app_id="moonlight-panel"] fullscreen enable
+
+### --- notifications -----------------------------------------------------
+# What draws the low-battery warning over a running stream.  It has to be the
+# notification daemon rather than anything of ours, because layer-shell is the
+# only way to paint above a fullscreen client without taking focus from it.
+exec mako
+
+### --- drop-ins -----------------------------------------------------------
+# Settings the menus write out so they survive a reboot -- the touchpad's
+# scroll direction, for one.  Included last so a drop-in wins over anything
+# above it.
+include /etc/sway/config.d/*
+
+### --- the session --------------------------------------------------------
+# Applies the saved layout, keymap and input settings, then runs the client.
+# When it exits, sway exits, and moonlight-session takes over on the console.
+exec /usr/local/bin/moonlight-wlsession
