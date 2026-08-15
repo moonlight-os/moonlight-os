@@ -1,4 +1,4 @@
-# Maintainer: Mopigames <mopigames2.0@gmail.com>
+# Maintainer: Margot Prego <mopigames@proton.me>
 #
 # Template.  __VERSION__ and __SHA256__ are filled in per release by
 # packaging/aur/render.sh, from the tarball GitHub actually serves.

@@ -30,7 +30,11 @@
 
 # --- payloads staged into the image tree --------------------------------
 # Downloaded or built by build.sh, not authored here.
+# The old extracted Moonlight AppImage. No longer produced, but leftover
+# trees exist in working copies from before the switch to a .deb.
 /config/includes.chroot/opt/moonlight/
+# Selene is built from source into a .deb and staged here at build time.
+/config/packages.chroot/
 /config/includes.chroot/opt/mlos-host-utils/
 /config/includes.chroot/usr/bin/tailscale
 /config/includes.chroot/usr/bin/.tailscale-version

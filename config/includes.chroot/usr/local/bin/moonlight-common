@@ -125,7 +125,14 @@ mlos_ip() {
 	ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1
 }
 
-MLOS_QT_CONF="$HOME/.config/Moonlight Game Streaming Project/Moonlight.conf"
+# Selene's Qt settings.  The path is derived from the organization and
+# application names Selene sets at startup (app/main.cpp), so the two must
+# change together or every setting write below silently goes nowhere.
+#
+# Relative to a filesystem root, so that tools which work on a disk mounted
+# elsewhere (moonlight-backup) can reuse it instead of repeating the literal.
+MLOS_QT_DIR_REL=".config/moonlight-os"
+MLOS_QT_CONF="$HOME/$MLOS_QT_DIR_REL/Selene.conf"
 
 # Moonlight keeps its own settings in a Qt ini file, and the launcher reads
 # them from there rather than from any command line.  These two put one key in
@@ -199,8 +206,8 @@ mlos_in_x() {
 # Ask the running Moonlight to exit so the session loop starts it again with
 # whatever was just changed.  Video settings are read once at start-up.
 #
-# By pid, not by name.  "pkill -f /opt/moonlight/" also matches anything that
-# merely mentions the path on its command line -- including the shell of an
+# By pid, not by name.  A -f match on the install path also matches anything
+# that merely mentions it on its command line -- including the shell of an
 # SSH session that was inspecting it, which is exactly how this was found.
 mlos_restart_moonlight() {
 	: > "$MLOS_STATE/restart" 2>/dev/null || return 1
@@ -208,7 +215,9 @@ mlos_restart_moonlight() {
 	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
 		kill "$pid" 2>/dev/null
 	else
-		# No pidfile: an older session, or Moonlight started by hand.
-		pkill -x AppRun 2>/dev/null || true
+		# No pidfile: an older session, or Selene started by hand.
+		# Was "pkill -x AppRun" -- AppRun is the AppImage runtime's name, not
+		# the client's, and it matched any AppImage that happened to be running.
+		pkill -x selene 2>/dev/null || true
 	fi
 }

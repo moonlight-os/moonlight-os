@@ -9,7 +9,9 @@
 #   ./build.sh shell           drop into the build container to poke around
 #
 # Environment:
-#   MOONLIGHT_VERSION=6.1.0    which Moonlight release to embed
+#   SELENE_SRC=<path>          Selene checkout to build the client from
+#                              (default ~/moonlight-os-stuff/selene)
+#   SELENE_REBUILD=1           rebuild the Selene .deb even if one is staged
 #   FIRMWARE=full|slim         slim drops ~400 MB of firmware blobs
 #   TAILSCALE_VERSION=1.2.3    pin Tailscale; default is the current stable
 #   SSH_KEYS=auto|none|<path>  which public keys may log in over SSH.
@@ -24,7 +26,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE=moonlight-os-builder
-MOONLIGHT_VERSION="${MOONLIGHT_VERSION:-6.1.0}"
+# Stamped into the ISO filename. It used to select which Moonlight AppImage to
+# download; the client is now built from source, so it is only a label.
+ISO_VERSION="${ISO_VERSION:-6.1.0}"
 FIRMWARE="${FIRMWARE:-full}"
 MLOS_SUITE="${MLOS_SUITE:-trixie}"
 TAILSCALE_VERSION="${TAILSCALE_VERSION:-}"
@@ -34,8 +38,7 @@ GO_IMAGE="${GO_IMAGE:-golang:1.24-bookworm}"
 # Used when pkgs.tailscale.com cannot be reached to ask what stable is.
 TAILSCALE_FALLBACK=1.102.2
 
-APPIMAGE="Moonlight-${MOONLIGHT_VERSION}-x86_64.AppImage"
-APPIMAGE_URL="https://github.com/moonlight-stream/moonlight-qt/releases/download/v${MOONLIGHT_VERSION}/${APPIMAGE}"
+SELENE_SRC="${SELENE_SRC:-$HOME/moonlight-os-stuff/selene}"
 
 say() { printf '\033[1;35m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -61,41 +64,45 @@ build_builder_image() {
 	DOCKERFILE
 }
 
-# ------------------------------------------------------------- moonlight ----
-fetch_moonlight() {
-	mkdir -p "$HERE/cache"
-	if [[ ! -f "$HERE/cache/$APPIMAGE" ]]; then
-		say "Downloading Moonlight $MOONLIGHT_VERSION"
-		curl -fL --progress-bar -o "$HERE/cache/$APPIMAGE.part" "$APPIMAGE_URL" \
-			|| die "could not download $APPIMAGE_URL"
-		mv "$HERE/cache/$APPIMAGE.part" "$HERE/cache/$APPIMAGE"
-	else
-		say "Using cached Moonlight $MOONLIGHT_VERSION"
+# ---------------------------------------------------------------- selene ----
+# Selene is built from source as a real Debian package and dropped into
+# config/packages.chroot/, where live-build installs it into the image like any
+# other package.  That is what lets the client use the image's own Qt, SDL,
+# FFmpeg and VA-API rather than carrying a second copy of all of them, and it
+# is why the LIBVA_DRIVERS_PATH override and the "pkill -x AppRun" fallback are
+# both gone from the launcher scripts.
+fetch_selene() {
+	[[ -d "$SELENE_SRC" ]] \
+		|| die "Selene source not found at $SELENE_SRC. Set SELENE_SRC to the checkout."
+
+	# Working copies from before the switch still have the extracted AppImage
+	# sitting in the image tree.  live-build copies whatever is there, so
+	# without this the ISO quietly ships a dead 145 MB copy of the old client
+	# alongside the new package.  Ignoring it in git is not enough -- git
+	# ignores it, live-build does not.
+	if [[ -d "$HERE/config/includes.chroot/opt/moonlight" ]]; then
+		say "Removing the superseded Moonlight AppImage from the image tree"
+		rm -rf "$HERE/config/includes.chroot/opt/moonlight"
 	fi
 
-	local dest="$HERE/config/includes.chroot/opt/moonlight"
-	if [[ -x "$dest/AppRun" ]] && [[ -f "$dest/.version" ]] \
-	   && [[ "$(cat "$dest/.version")" == "$MOONLIGHT_VERSION" ]]; then
+	local dest="$HERE/config/packages.chroot"
+	mkdir -p "$dest"
+
+	if [[ -z "${SELENE_REBUILD:-}" ]] && compgen -G "$dest/selene_*.deb" >/dev/null; then
+		say "Using the Selene package already staged in packages.chroot"
 		return
 	fi
 
-	say "Unpacking Moonlight into the image tree"
-	rm -rf "$dest"
-	mkdir -p "$(dirname "$dest")"
-	# Extract inside the container: --appimage-extract needs to execute the
-	# AppImage runtime, and this keeps the build independent of the host.
-	docker run --rm --network host \
-		-v "$HERE/cache:/cache" \
-		-v "$HERE/config/includes.chroot/opt:/dest" \
-		"$IMAGE" bash -euc "
-			cd /tmp
-			cp /cache/$APPIMAGE ./m.AppImage
-			chmod +x ./m.AppImage
-			./m.AppImage --appimage-extract >/dev/null
-			mv squashfs-root /dest/moonlight
-			echo '$MOONLIGHT_VERSION' > /dest/moonlight/.version
-			chmod -R a+rX /dest/moonlight
-		"
+	say "Building the Selene package from $SELENE_SRC"
+	# build-deb.sh does its work in a Debian container of the same suite, so
+	# the package matches the image regardless of what this machine runs.
+	MLOS_SUITE="$MLOS_SUITE" "$SELENE_SRC/scripts/build-deb.sh" \
+		|| die "Selene package build failed"
+
+	rm -f "$dest"/selene_*.deb
+	cp "$SELENE_SRC"/dist/selene_*.deb "$dest/" \
+		|| die "no Selene .deb was produced"
+	say "Staged $(basename "$(ls -1 "$dest"/selene_*.deb | head -1)")"
 }
 
 # ------------------------------------------------------------- tailscale ----
@@ -249,7 +256,7 @@ stage_ssh_keys() {
 # ----------------------------------------------------------------- build ----
 do_build() {
 	build_builder_image
-	fetch_moonlight
+	fetch_selene
 	fetch_tailscale
 	build_host_utils
 	stage_ssh_keys
@@ -301,11 +308,11 @@ do_build() {
 
 	local stamp
 	stamp="$(date +%Y%m%d)"
-	mv "$iso" "$HERE/out/moonlight-os-${MOONLIGHT_VERSION}-${stamp}.iso"
+	mv "$iso" "$HERE/out/moonlight-os-${ISO_VERSION}-${stamp}.iso"
 
-	say "Done: out/moonlight-os-${MOONLIGHT_VERSION}-${stamp}.iso ($(du -h "$HERE/out/moonlight-os-${MOONLIGHT_VERSION}-${stamp}.iso" | cut -f1))"
+	say "Done: out/moonlight-os-${ISO_VERSION}-${stamp}.iso ($(du -h "$HERE/out/moonlight-os-${ISO_VERSION}-${stamp}.iso" | cut -f1))"
 	printf '\nWrite it to a USB stick with:\n  sudo dd if=out/moonlight-os-%s-%s.iso of=/dev/sdX bs=4M status=progress oflag=sync\n\n' \
-		"$MOONLIGHT_VERSION" "$stamp"
+		"$ISO_VERSION" "$stamp"
 }
 
 do_clean() {
@@ -316,13 +323,13 @@ do_clean() {
 		"$IMAGE" bash -uc 'lb clean --purge || true
 			chown -R "$HOST_UID:$HOST_GID" /build 2>/dev/null || true' || true
 	rm -rf "$HERE/config/includes.chroot/etc/moonlight-os/authorized_keys" \
-	       "$HERE/config/includes.chroot/opt/moonlight" \
 	       "$HERE/config/includes.chroot/usr/bin/tailscale" \
 	       "$HERE/config/includes.chroot/usr/bin/.tailscale-version" \
 	       "$HERE/config/includes.chroot/usr/sbin/tailscaled" \
 	       "$HERE/config/includes.chroot/etc/systemd/system/tailscaled.service" \
 	       "$HERE/config/includes.chroot/etc/default/tailscaled" \
-	       "$HERE/config/includes.chroot/opt/mlos-host-utils"
+	       "$HERE/config/includes.chroot/opt/mlos-host-utils" \
+	       "$HERE/config/packages.chroot"
 	say "Cleaned (cache/ kept)"
 }
 

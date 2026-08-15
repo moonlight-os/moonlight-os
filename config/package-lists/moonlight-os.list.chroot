@@ -189,9 +189,12 @@ alsa-ucm-conf
 alsa-topology-conf
 pipewire-alsa
 
-## ---- required by the bundled Moonlight libs --------------------------
+## ---- Qt platform plugin ----------------------------------------------
 # libqxcb.so -> libgcrypt -> libgpg-error.  Without this the Qt platform
-# plugin fails to load and Moonlight never draws a window.
+# plugin fails to load and the client never draws a window.  Since Selene
+# became a real package this arrives as a dependency of Debian's Qt rather
+# than being needed by a bundled copy -- named here so it stays true by
+# intent rather than by luck.
 libgpg-error0
 fonts-dejavu-core
 # Scalable Type1 core fonts.  Listed for moonlight-osd's sake: the low-battery

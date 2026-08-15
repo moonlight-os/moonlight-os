@@ -63,9 +63,9 @@ if [ -n "$MOONLIGHT_OUTPUT" ]; then
 		[ -n "$x" ] && [ -n "$y" ] || exit 0
 		i=0
 		while [ $i -lt 60 ]; do
-			# Anchored: an unanchored "moonlight" also matches the
+			# Anchored: an unanchored "selene" would be a substring match.
 			# settings panel's own window class.
-			wid=$(xdotool search --class -- '^moonlight$' 2>/dev/null | head -1)
+			wid=$(xdotool search --class -- '^selene$' 2>/dev/null | head -1)
 			if [ -n "$wid" ]; then
 				xdotool windowmove "$wid" "$x" "$y" 2>/dev/null
 				exit 0
@@ -81,8 +81,8 @@ fi
 # session to change one would dump the user back on the console.
 rm -f "$MLOS_STATE/restart"
 while :; do
-	# Backgrounded only so the pid can be recorded; the wrapper execs the
-	# AppImage, so this pid stays the one to signal.  Killing by pid beats
+	# Backgrounded only so the pid can be recorded; the wrapper execs
+	# selene, so this pid stays the one to signal.  Killing by pid beats
 	# matching a command line, which catches innocent bystanders.
 	/usr/local/bin/moonlight &
 	ml_pid=$!

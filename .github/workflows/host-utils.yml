@@ -242,8 +242,8 @@ jobs:
           EOF
           export GIT_SSH_COMMAND="ssh -i /tmp/aur-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=/tmp/aur-ssh/known_hosts -o StrictHostKeyChecking=yes"
 
-          git config --global user.name "Mopigames"
-          git config --global user.email "mopigames2.0@gmail.com"
+          git config --global user.name "Margot Prego"
+          git config --global user.email "mopigames@proton.me"
 
           git clone ssh://aur@aur.archlinux.org/mlos-host-utils.git /tmp/aur-repo
           cp /tmp/aur/PKGBUILD /tmp/aur/.SRCINFO /tmp/aur-repo/

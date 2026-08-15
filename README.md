@@ -46,7 +46,8 @@ Options:
 
 | Variable            | Default  | Effect                                          |
 | ------------------- | -------- | ----------------------------------------------- |
-| `MOONLIGHT_VERSION` | `6.1.0`  | Which Moonlight release to embed                |
+| `ISO_VERSION`       | `6.1.0`  | Version label stamped into the ISO filename     |
+| `SELENE_SRC`        | `~/moonlight-os-stuff/selene` | Selene checkout to build the client from |
 | `FIRMWARE`          | `full`   | `slim` drops ~400 MB of firmware blobs          |
 | `TAILSCALE_VERSION` | latest   | Pin Tailscale instead of taking current stable  |
 | `SSH_KEYS`          | `auto`   | Keys allowed in over SSH; `none`, or a path     |
@@ -742,15 +743,28 @@ Some of these are non-obvious, and a couple were found the hard way:
   is both lighter and more predictable. `openbox` is there purely so
   Moonlight's fullscreen request has a window manager to talk to.
 
-- **AppImage, not a .deb.** Moonlight's Cloudsmith apt repo publishes arm64,
-  armhf and riscv64 only — the amd64 `Packages` file is empty. The x86 build is
-  distributed as an AppImage, so `build.sh` extracts it into `/opt/moonlight`
-  at build time (no FUSE needed at runtime).
+- **A .deb, not an AppImage.** The client is Selene, our fork of moonlight-qt,
+  built from source by `build.sh` into a real Debian package and staged in
+  `config/packages.chroot/`. Upstream Moonlight ships x86 as an AppImage only
+  (its Cloudsmith apt repo publishes arm64, armhf and riscv64 — the amd64
+  `Packages` file is empty), and that AppImage carried a second copy of Qt,
+  SDL, FFmpeg and libva.
 
-- **`libgpg-error0` is not optional.** The bundled `libqxcb.so` pulls in
-  `libgcrypt` → `libgpg-error`, and Debian doesn't install the latter by
-  default under `--no-install-recommends`. Without it Qt can't load its
-  platform plugin and Moonlight never draws a window.
+  This is **not** a size win, which is worth stating plainly because it looks
+  like it should be. Dropping the 145 MB AppImage means the image has to carry
+  Debian's Qt6 (46 MB) and its QML modules instead, and after squashfs the ISO
+  lands about 13 MB *larger* than the AppImage build. What it buys is
+  correctness: the client links the same libva, Mesa and FFmpeg as everything
+  else in the image, which removed two standing hacks — the
+  `LIBVA_DRIVERS_PATH` override, needed because the bundled libva was built
+  against a different prefix, and the `pkill -x AppRun` restart fallback, which
+  matched a name belonging to the AppImage runtime rather than to the client.
+
+- **`libgpg-error0` is not optional.** `libqxcb.so` pulls in `libgcrypt` →
+  `libgpg-error`, and Debian doesn't install the latter by default under
+  `--no-install-recommends`. Without it Qt can't load its platform plugin and
+  the client never draws a window. It now arrives as a dependency of Debian's
+  Qt rather than of a bundled copy, but it is still listed explicitly.
 
 - **Keyboard before Wi-Fi.** The region wizard runs first on purpose: on a
   non-US layout, every character of a Wi-Fi password typed at the network
@@ -832,8 +846,8 @@ The scripts are POSIX `sh` and readable in one sitting:
 
 ## Limitations
 
-- **amd64 only.** For a Raspberry Pi, Moonlight's apt repo *does* ship arm64
-  debs — swap the AppImage step for that repo and change `MLOS_ARCH`. Untested.
+- **amd64 only.** Selene is built for amd64. For a Raspberry Pi it would need
+  cross-building or building on the target, plus `MLOS_ARCH`. Untested.
 - **NVIDIA GPUs use the nouveau driver**, which has no usable video decode on
   recent cards. Intel and AMD get full VAAPI hardware decoding. If your client
   box has an NVIDIA card, add `nvidia-driver` to the package list.
