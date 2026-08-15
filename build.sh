@@ -75,6 +75,16 @@ fetch_selene() {
 	[[ -d "$SELENE_SRC" ]] \
 		|| die "Selene source not found at $SELENE_SRC. Set SELENE_SRC to the checkout."
 
+	# Working copies from before the switch still have the extracted AppImage
+	# sitting in the image tree.  live-build copies whatever is there, so
+	# without this the ISO quietly ships a dead 145 MB copy of the old client
+	# alongside the new package.  Ignoring it in git is not enough -- git
+	# ignores it, live-build does not.
+	if [[ -d "$HERE/config/includes.chroot/opt/moonlight" ]]; then
+		say "Removing the superseded Moonlight AppImage from the image tree"
+		rm -rf "$HERE/config/includes.chroot/opt/moonlight"
+	fi
+
 	local dest="$HERE/config/packages.chroot"
 	mkdir -p "$dest"
 
