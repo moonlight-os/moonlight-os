@@ -67,3 +67,13 @@ while :; do
 	moonlight-region --apply-session
 	moonlight-displays --apply
 done
+
+# Bring the compositor down with us.
+#
+# sway's `exec` only spawns a process -- unlike startx, which owned the X
+# server's lifetime and tore it down when its client exited.  Without this the
+# session script ends, sway stays up showing an empty desktop, and
+# moonlight-session never regains the console to offer the menu.  Which is
+# exactly what a client that fails to start looks like: a black screen and no
+# way out.
+swaymsg exit >/dev/null 2>&1 || true

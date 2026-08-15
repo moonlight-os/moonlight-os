@@ -6,7 +6,15 @@
 
 mlos_load
 
-export QT_QPA_PLATFORM=xcb
+# The platform comes from the session (mlos_run_compositor), which is the one
+# place that knows what is running.  This used to hardcode xcb, and left that
+# way it overrode the session's setting and sent Qt looking for an X server
+# that no longer exists -- the client then aborted outright with "no Qt
+# platform plugin could be initialized".
+#
+# Only defaulted, so that running this by hand from a TTY for debugging still
+# picks something rather than failing.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 
 # No LIBVA_DRIVERS_PATH override here on purpose.  It existed because the
 # AppImage bundled its own libva built against a different prefix, so the
