@@ -10,6 +10,9 @@ on:
       iso_version:
         description: 'Version label stamped into the ISO filename'
         default: '6.1.0'
+      selene_ref:
+        description: 'Selene ref to build the client from'
+        default: 'main'
       firmware:
         description: 'full keeps every blob, slim drops ~400 MB'
         type: choice
@@ -75,12 +78,24 @@ jobs:
             echo "arg=none" >> "$GITHUB_OUTPUT"
           fi
 
+      # The client is built from source into a .deb, so its checkout is a
+      # build input.  Submodules are required: Selene links the shared
+      # protocol library (moonlight-os/lunaris) as a submodule.
+      - name: Check out Selene
+        uses: actions/checkout@v4
+        with:
+          repository: moonlight-os/selene
+          ref: ${{ inputs.selene_ref || 'main' }}
+          submodules: recursive
+          path: selene
+
       - name: Build the ISO
         env:
           ISO_VERSION: ${{ inputs.iso_version || '6.1.0' }}
           FIRMWARE: ${{ inputs.firmware || 'full' }}
           HOST_UTILS: ${{ inputs.host_utils || 'amd64' }}
           SSH_KEYS: ${{ steps.ssh.outputs.arg }}
+          SELENE_SRC: ${{ github.workspace }}/selene
         run: ./build.sh
 
       - name: Describe the image
