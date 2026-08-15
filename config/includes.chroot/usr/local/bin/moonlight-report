@@ -25,8 +25,8 @@ if [ -d /run/live/medium ]; then printf 'booted: live medium\n'; else printf 'bo
 sec "Moonlight OS settings"
 cat "$MLOS_CONF" 2>/dev/null
 
-sec "Moonlight's own settings"
-grep -vE 'certificate|^key=' "$HOME/.config/Moonlight Game Streaming Project/Moonlight.conf" 2>/dev/null \
+sec "Selene's own settings"
+grep -vE 'certificate|^key=' "$MLOS_QT_CONF" 2>/dev/null \
 	|| printf '(none yet)\n'
 
 sec "Graphics hardware"

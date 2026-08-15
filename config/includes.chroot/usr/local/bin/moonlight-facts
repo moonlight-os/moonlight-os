@@ -11,15 +11,15 @@ mlos_load 2>/dev/null || true
 
 case "${1:-}" in
 	version)
-		cat /opt/moonlight/.version 2>/dev/null || printf 'unknown'
+		dpkg-query -W -f='${Version}' selene 2>/dev/null || printf 'unknown'
 		;;
 	host)
 		if [ -n "$AUTOCONNECT_HOST" ]; then
 			printf '%s (auto-connect)' "$AUTOCONNECT_HOST"
 		else
-			# Whatever Moonlight itself has paired, if anything.
+			# Whatever Selene itself has paired, if anything.
 			h=$(sed -n 's/^1\\localaddress=//p' \
-				"$HOME/.config/Moonlight Game Streaming Project/Moonlight.conf" \
+				"$MLOS_QT_CONF" \
 				2>/dev/null | head -1)
 			printf '%s' "${h:-nothing paired yet}"
 		fi

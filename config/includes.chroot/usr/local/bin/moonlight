@@ -1,5 +1,5 @@
 #!/bin/sh
-# Thin wrapper around the extracted Moonlight AppImage in /opt/moonlight.
+# Thin wrapper around Selene, installed from the selene .deb as /usr/bin/selene.
 #
 # shellcheck source=./moonlight-common
 . /usr/local/bin/moonlight-common
@@ -8,10 +8,10 @@ mlos_load
 
 export QT_QPA_PLATFORM=xcb
 
-# The AppImage bundles its own libva, built elsewhere, so the driver search
-# path compiled into it is not necessarily Debian's.  Point it at the real one
-# or VAAPI silently finds no driver and video decoding dies.
-export LIBVA_DRIVERS_PATH="${LIBVA_DRIVERS_PATH:-/usr/lib/x86_64-linux-gnu/dri}"
+# No LIBVA_DRIVERS_PATH override here on purpose.  It existed because the
+# AppImage bundled its own libva built against a different prefix, so the
+# compiled-in driver search path was not Debian's.  A native package links
+# against the system libva and finds its drivers unaided.
 
 # Escape hatch for a black stream: FORCE_SOFTWARE=yes in the config file makes
 # Moonlight skip Vulkan/libplacebo and hardware decode entirely.  Slower, but
@@ -95,8 +95,8 @@ if [ -n "$AUTOCONNECT_HOST" ]; then
 	set -- stream --display-mode "$wm_name"
 	[ -n "$width" ] && [ -n "$height" ] && set -- "$@" --resolution "${width}x${height}"
 	set -- "$@" --fps "${STREAM_FPS:-60}"
-	exec /opt/moonlight/AppRun "$@" \
+	exec /usr/bin/selene "$@" \
 		"$AUTOCONNECT_HOST" "${AUTOCONNECT_APP:-Desktop}"
 fi
 
-exec /opt/moonlight/AppRun "$@"
+exec /usr/bin/selene "$@"

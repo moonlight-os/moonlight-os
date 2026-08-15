@@ -17,9 +17,6 @@ rm -rf /usr/share/doc/* \
 find /usr/share/locale -mindepth 1 -maxdepth 1 -type d \
 	! -name 'en*' ! -name 'C*' -exec rm -rf {} + 2>/dev/null || true
 
-# The AppImage ships its own copies of Qt's translations and docs.
-rm -rf /opt/moonlight/usr/share/doc 2>/dev/null || true
-
 # The C compiler proper, 33 MB of it.  x11-xserver-utils depends on cpp
 # because xrdb pipes X resource files through a preprocessor -- and xrdb is
 # never run here.  The package has to stay to satisfy the dependency; its

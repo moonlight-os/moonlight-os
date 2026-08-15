@@ -43,10 +43,7 @@ PATHS="
 /var/lib/bluetooth
 /home/moonlight/.ssh/authorized_keys
 /home/moonlight/.local/state/wireplumber
-"
-# Kept separate only because the directory name has spaces in it.
-QT_DIRS="
-/home/moonlight/.config/Moonlight Game Streaming Project
+/home/moonlight/$MLOS_QT_DIR_REL
 /home/moonlight/.config/fastfetch
 "
 
@@ -64,10 +61,6 @@ ROOT=""
 
 existing() {
 	for p in $PATHS; do
-		[ -e "$ROOT$p" ] && printf '%s\n' "${p#/}"
-	done
-	printf '%s\n' "$QT_DIRS" | while IFS= read -r p; do
-		[ -n "$p" ] || continue
 		[ -e "$ROOT$p" ] && printf '%s\n' "${p#/}"
 	done
 	# SSH host keys, so reconnecting does not trip the fingerprint warning.
@@ -341,8 +334,8 @@ summary() {
 	has() { printf '%s\n' "$names" | grep -q "$1"; }
 	count() { printf '%s\n' "$names" | grep -c "$1"; }
 
-	if has '^home/moonlight/\.config/Moonlight Game Streaming Project/Moonlight\.conf$'; then
-		printf 'Moonlight pairing and settings\n'
+	if has "^home/moonlight/$(printf '%s' "$MLOS_QT_DIR_REL" | sed 's/\./\\./g')/Selene\.conf\$"; then
+		printf 'Selene pairing and settings\n'
 	fi
 	n=$(count '^etc/NetworkManager/system-connections/..*')
 	[ "$n" -gt 0 ] && printf 'Wi-Fi and network: %s saved connection(s)\n' "$n"

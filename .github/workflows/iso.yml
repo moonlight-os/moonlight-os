@@ -7,8 +7,8 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      moonlight_version:
-        description: 'Moonlight release to embed'
+      iso_version:
+        description: 'Version label stamped into the ISO filename'
         default: '6.1.0'
       firmware:
         description: 'full keeps every blob, slim drops ~400 MB'
@@ -49,7 +49,7 @@ jobs:
           sudo docker image prune -af
           df -h /
 
-      # cache/ holds the Moonlight AppImage, the Tailscale tarball, the Go
+      # cache/ holds the Tailscale tarball, the Go
       # caches and live-build's .deb pool.  Restoring it cuts the download
       # from ~1 GB to almost nothing; the key rolls weekly so the pool does
       # not go stale (and stays under the 10 GB cache budget).
@@ -57,9 +57,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: cache
-          key: mlos-cache-${{ inputs.moonlight_version || '6.1.0' }}-${{ github.run_id }}
+          key: mlos-cache-${{ inputs.iso_version || '6.1.0' }}-${{ github.run_id }}
           restore-keys: |
-            mlos-cache-${{ inputs.moonlight_version || '6.1.0' }}-
+            mlos-cache-${{ inputs.iso_version || '6.1.0' }}-
 
       - name: Stage SSH key
         id: ssh
@@ -77,7 +77,7 @@ jobs:
 
       - name: Build the ISO
         env:
-          MOONLIGHT_VERSION: ${{ inputs.moonlight_version || '6.1.0' }}
+          ISO_VERSION: ${{ inputs.iso_version || '6.1.0' }}
           FIRMWARE: ${{ inputs.firmware || 'full' }}
           HOST_UTILS: ${{ inputs.host_utils || 'amd64' }}
           SSH_KEYS: ${{ steps.ssh.outputs.arg }}

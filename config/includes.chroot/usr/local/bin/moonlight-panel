@@ -38,7 +38,7 @@ fi
 # Moonlight grabs the X keyboard while streaming, so a window opened over the
 # top of it would come up unusable -- visible, focused, and receiving nothing.
 # Iconifying Moonlight makes SDL drop the grab; it comes back afterwards.
-hidden=$(xdotool search --class -- '^moonlight$' 2>/dev/null)
+hidden=$(xdotool search --class -- '^selene$' 2>/dev/null)
 for w in $hidden; do
 	xdotool windowminimize "$w" 2>/dev/null || true
 done
