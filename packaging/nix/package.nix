@@ -14,18 +14,18 @@
 
 buildGoModule (finalAttrs: {
   pname = "mlos-host-utils";
-  version = "0.1.3";
+  version = "0.1.4";
 
   src = fetchFromGitHub {
     owner = "MopigamesYT";
     repo = "moonlight-os";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-TZDaNAV+v7reKiBllkbESQ1/n1ItGKFDNGMUcuNcXcM=";
+    hash = "sha256-Xocz96LECuLSDMN582a3MbMX6MUxVs8N4jI7lUv/c6c=";
   };
 
-  # nixpkgs-vet fails a new package without this, and it is where nixpkgs is
-  # going anyway: the builder gets the attributes as real data structures
-  # rather than as shell-mangled strings.
+  # Where nixpkgs is going, and required of new packages there: the builder
+  # gets the attributes as real data structures rather than as shell-mangled
+  # strings.  Kept so this file stays droppable into nixpkgs unchanged.
   __structuredAttrs = true;
 
   # The agent is one directory of a repository that is otherwise an ISO

@@ -244,11 +244,16 @@ jobs:
           git clone ssh://aur@aur.archlinux.org/mlos-host-utils.git /tmp/aur-repo
           cp /tmp/aur/PKGBUILD /tmp/aur/.SRCINFO /tmp/aur-repo/
           cd /tmp/aur-repo
-          if git diff --quiet; then
+          # Staged first, and compared against the index rather than the
+          # worktree: on the very first publish the AUR repository is empty,
+          # so the copied files are untracked -- and `git diff` on its own
+          # sees no change, reports the version as already published and
+          # pushes nothing at all.
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
             echo "the AUR already has this version"
             exit 0
           fi
-          git add PKGBUILD .SRCINFO
           git commit -m "${GITHUB_REF_NAME#v}"
           git push
 
