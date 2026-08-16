@@ -267,15 +267,25 @@ mlos_run_compositor() {
 	# mishandle atomic commits.  A laptop or mini-PC has eDP or HDMI/DP and
 	# is left on atomic.
 	#
-	# Caveat, and it is a real one: the tell is inferred from a single
-	# machine, and the 1454-failure measurement was taken in a session that
-	# also had three other WLR_ variables set while chasing an unrelated bug
-	# (which turned out to be a compositing problem -- see moonlight-panel).
-	# The failures themselves are not in doubt; the inference from "this DSI
-	# tablet" to "DSI tablets generally" is.  Worth re-measuring with atomic
-	# forced back on and nothing else set before trusting the heuristic.  If
-	# it does not hold up, the honest version is atomic on everywhere and
-	# DRM_ATOMIC=no in the reference tablet's own config.
+	# Re-measured cleanly, since the original count was taken in a session
+	# that also had three unrelated WLR_ variables set.  Same tablet, one
+	# boot each, no other flags, identical 60s repaint load (a terminal
+	# running `yes`):
+	#
+	#     atomic   126 failures/minute  (~2.1/s)
+	#     legacy     0
+	#
+	# which reproduces the original 1454-in-11-minutes rate almost exactly.
+	# Two things worth knowing about the shape of it: the failures are
+	# load-dependent, so an idle session shows nothing and proves nothing --
+	# measure under repaint -- and roughly 15 of them fire during startup
+	# regardless.  The session does still come up under atomic; it just
+	# drops frames continuously once anything is redrawing.
+	#
+	# What remains unproven is only the generalisation.  The tell is
+	# inferred from one machine, so a DSI device whose atomic path is fine
+	# would be needlessly put on legacy.  Harmless, and DRM_ATOMIC=yes in
+	# the config overrides it.
 	drm_atomic="${DRM_ATOMIC:-auto}"
 	if [ "$drm_atomic" = "auto" ]; then
 		drm_atomic=yes
