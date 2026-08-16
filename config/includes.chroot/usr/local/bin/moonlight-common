@@ -20,8 +20,9 @@ mlos_load() {
 	KEYBOARD_VARIANT=""
 	TIMEZONE=""
 	FORCE_SOFTWARE="no"
-	# Atomic modesetting: broken on some Intel DSI panels, see mlos_run_compositor.
-	DRM_ATOMIC="no"
+	# Atomic modesetting: auto|yes|no.  auto keeps atomic except on the DSI
+	# tablet panels that mishandle it -- see mlos_run_compositor.
+	DRM_ATOMIC="auto"
 	# Extra KEY=VALUE pairs for the compositor, for driver quirks.
 	COMPOSITOR_ENV=""
 	WINDOW_MODE="borderless"
@@ -254,9 +255,29 @@ mlos_run_compositor() {
 	# drivers do handle.  The cost is losing atomic's tear-free presentation
 	# guarantees; a frozen screen is worse.
 	#
-	# DRM_ATOMIC=yes in the config file turns it back on, for hardware where
-	# atomic works and is wanted.
-	if [ "${DRM_ATOMIC:-no}" != "yes" ]; then
+	# DRM_ATOMIC=yes or =no in the config file overrides the detection either
+	# way, for hardware the heuristic gets wrong.
+	# "auto" is the default: leave atomic alone unless this machine is the
+	# kind that breaks under it.  Forcing legacy everywhere would cost every
+	# other machine atomic's tear-free presentation to fix one tablet.
+	#
+	# The tell is a DSI panel.  The failing hardware is the cheap Intel
+	# Atom/Cherry Trail tablet class, where the internal panel hangs off DSI
+	# rather than eDP -- and those are the boards whose display engines
+	# mishandle atomic commits.  A laptop or mini-PC has eDP or HDMI/DP and
+	# is left on atomic.
+	drm_atomic="${DRM_ATOMIC:-auto}"
+	if [ "$drm_atomic" = "auto" ]; then
+		drm_atomic=yes
+		for conn in /sys/class/drm/card*-DSI-*; do
+			[ -e "$conn/status" ] || continue
+			[ "$(cat "$conn/status" 2>/dev/null)" = "connected" ] || continue
+			drm_atomic=no
+			break
+		done
+	fi
+
+	if [ "$drm_atomic" != "yes" ]; then
 		export WLR_DRM_NO_ATOMIC=1
 		# Modifiers go with it.  The legacy interface cannot describe a
 		# buffer's modifier to the display engine, so a composited frame
