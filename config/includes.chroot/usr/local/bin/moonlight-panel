@@ -48,19 +48,38 @@ fi
 
 # The panel opens on a workspace of its own.
 #
-# It has to be somewhere the client is not. On this hardware a fullscreen
-# client stays on screen even after the compositor has un-fullscreened it,
-# marked it invisible and put another fullscreen window in front: the driver
-# never updates the display plane, so what you see is the stream while sway
-# insists the panel is visible. Measured, repeatedly -- and no combination of
-# WLR_SCENE_DISABLE_DIRECT_SCANOUT, WLR_SCENE_DEBUG_DAMAGE=rerender,
-# WLR_DRM_NO_ATOMIC or WLR_DRM_NO_MODIFIERS changes it. What does change it is
-# the client not being on the visible workspace at all.
+# It has to be somewhere the client is not, because an ordinary window cannot
+# reliably draw over a fullscreen one here.  Open a second toplevel over a
+# fullscreen Selene and sway will report exactly what you asked for -- panel
+# fullscreen and visible, client un-fullscreened and not visible -- while the
+# screen still shows the client.  Reproduced on demand on the reference
+# tablet, with a live stream running.
 #
-# A workspace switch is the cheapest way to arrange that. The scratchpad also
-# works, but `scratchpad show` hands the window back floating at some other
-# size, and putting a stream's geometry back together afterwards is fiddly and
-# was visibly wrong. Switching workspaces does not touch the window at all.
+# This is a compositing bug, not a display one, and the distinction cost a
+# whole night to get right.  `grim` reads back what wlroots composited rather
+# than what the panel is showing, and in the failing case grim returns the
+# stream: sway really did composite the wrong surface.  So none of the
+# hardware explanations hold.  Direct scanout is impossible on this output
+# anyway -- it runs transform=90, and wlroots cannot scan out a rotated
+# output -- which is why WLR_SCENE_DISABLE_DIRECT_SCANOUT changed nothing:
+# it switched off something that was never on.  WLR_SCENE_DEBUG_DAMAGE,
+# WLR_DRM_NO_ATOMIC and WLR_DRM_NO_MODIFIERS changed nothing either, alone or
+# together, for the same reason.
+#
+# The Wayland-correct fix is a layer-shell surface on the overlay layer, which
+# is defined to render above fullscreen surfaces -- verified here: swaynag
+# -y overlay draws over the live stream perfectly.  We do not use it because
+# foot has no layer-shell support, so a terminal panel can only ever be an
+# xdg toplevel.  Moving off whiptail-in-a-terminal (fuzzel --dmenu already
+# defaults to layer=overlay; gtk4-layer-shell for something richer) is the
+# real fix and is deliberately not attempted here.
+#
+# Until then the panel goes where the client isn't.  A workspace switch is the
+# cheapest way to arrange that, and it is a reasonable design in its own right
+# for a modal full-screen settings menu.  The scratchpad also works, but
+# `scratchpad show` hands the window back floating at some other size, and
+# putting a stream's geometry back together afterwards is fiddly and was
+# visibly wrong.  Switching workspaces does not touch the window at all.
 #
 # The X11 version iconified the client here for a different reason entirely --
 # to make SDL drop its keyboard grab. That reason is gone; the need to get the

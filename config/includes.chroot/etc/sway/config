@@ -72,13 +72,23 @@ bindsym --to-code Ctrl+Alt+Shift+q exit
 # The panel gets a workspace to itself, and the compositor switches to it as
 # the window appears.
 #
-# It cannot simply open on top.  On this hardware a fullscreen client stays on
-# screen even after sway has un-fullscreened it, marked it invisible and put
-# another fullscreen window in front: the display plane is never updated, so
-# what you see is the stream while sway insists the panel is visible.  None of
+# It cannot simply open on top.  A second toplevel over a fullscreen client
+# does not reliably get drawn: sway reports the panel fullscreen and visible
+# and the client not visible, and the screen still shows the client.
+#
+# That is a compositing bug rather than a display one -- grim reads back what
+# wlroots composited, and in the failing case grim returns the client, so the
+# wrong surface really was composited.  Nothing at the DRM layer is involved:
+# this output runs transform=90 and wlroots cannot scan out a rotated output,
+# so direct scanout was never in play, and neither
 # WLR_SCENE_DISABLE_DIRECT_SCANOUT, WLR_SCENE_DEBUG_DAMAGE=rerender,
-# WLR_DRM_NO_ATOMIC or WLR_DRM_NO_MODIFIERS changes that.  Putting the client
-# on a workspace that is not being displayed does.
+# WLR_DRM_NO_ATOMIC nor WLR_DRM_NO_MODIFIERS makes any difference.
+#
+# A layer-shell surface on the overlay layer is the mechanism that is actually
+# defined to draw above fullscreen surfaces, and it works here (checked with
+# swaynag -y overlay over a live stream).  foot cannot use it -- no layer-shell
+# support -- so until the panel stops being a terminal, it goes where the
+# client isn't.  See moonlight-panel for the full write-up.
 #
 # Done here rather than in moonlight-panel because a script that switches
 # workspace and then spawns the terminal races: sway places a window on

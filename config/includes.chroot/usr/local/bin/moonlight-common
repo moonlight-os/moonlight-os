@@ -266,6 +266,16 @@ mlos_run_compositor() {
 	# rather than eDP -- and those are the boards whose display engines
 	# mishandle atomic commits.  A laptop or mini-PC has eDP or HDMI/DP and
 	# is left on atomic.
+	#
+	# Caveat, and it is a real one: the tell is inferred from a single
+	# machine, and the 1454-failure measurement was taken in a session that
+	# also had three other WLR_ variables set while chasing an unrelated bug
+	# (which turned out to be a compositing problem -- see moonlight-panel).
+	# The failures themselves are not in doubt; the inference from "this DSI
+	# tablet" to "DSI tablets generally" is.  Worth re-measuring with atomic
+	# forced back on and nothing else set before trusting the heuristic.  If
+	# it does not hold up, the honest version is atomic on everywhere and
+	# DRM_ATOMIC=no in the reference tablet's own config.
 	drm_atomic="${DRM_ATOMIC:-auto}"
 	if [ "$drm_atomic" = "auto" ]; then
 		drm_atomic=yes
