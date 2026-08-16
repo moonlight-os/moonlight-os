@@ -46,7 +46,52 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 	fi
 fi
 
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM HUP
+# The panel opens on a workspace of its own.
+#
+# It has to be somewhere the client is not. On this hardware a fullscreen
+# client stays on screen even after the compositor has un-fullscreened it,
+# marked it invisible and put another fullscreen window in front: the driver
+# never updates the display plane, so what you see is the stream while sway
+# insists the panel is visible. Measured, repeatedly -- and no combination of
+# WLR_SCENE_DISABLE_DIRECT_SCANOUT, WLR_SCENE_DEBUG_DAMAGE=rerender,
+# WLR_DRM_NO_ATOMIC or WLR_DRM_NO_MODIFIERS changes it. What does change it is
+# the client not being on the visible workspace at all.
+#
+# A workspace switch is the cheapest way to arrange that. The scratchpad also
+# works, but `scratchpad show` hands the window back floating at some other
+# size, and putting a stream's geometry back together afterwards is fiddly and
+# was visibly wrong. Switching workspaces does not touch the window at all.
+#
+# The X11 version iconified the client here for a different reason entirely --
+# to make SDL drop its keyboard grab. That reason is gone; the need to get the
+# client off the screen outlived it.
+PANEL_WS=mlos-panel
+
+# Where to go back to. Read before the panel window exists, so it is the
+# workspace the stream is on -- and guarded against being the panel's own
+# workspace, which would leave nowhere to return to if the lock ever went
+# stale while the panel workspace was focused.
+prev_ws() {
+	swaymsg -t get_workspaces -r 2>/dev/null | python3 -c '
+import json, sys
+try:
+    for w in json.load(sys.stdin):
+        if w.get("focused"):
+            print(w.get("name"))
+            break
+except Exception:
+    pass
+'
+}
+
+PREV="$(prev_ws)"
+[ "$PREV" = "$PANEL_WS" ] && PREV=""
+
+restore() {
+	swaymsg workspace "${PREV:-1}" >/dev/null 2>&1 || true
+	rmdir "$LOCK" 2>/dev/null
+}
+trap restore EXIT INT TERM HUP
 
 # Not exec'd: the trap above has to run when the menu closes, or the lock
 # outlives the panel and Ctrl+Alt+M never works again for the rest of the

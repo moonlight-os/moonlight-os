@@ -20,6 +20,10 @@ mlos_load() {
 	KEYBOARD_VARIANT=""
 	TIMEZONE=""
 	FORCE_SOFTWARE="no"
+	# Atomic modesetting: broken on some Intel DSI panels, see mlos_run_compositor.
+	DRM_ATOMIC="no"
+	# Extra KEY=VALUE pairs for the compositor, for driver quirks.
+	COMPOSITOR_ENV=""
 	WINDOW_MODE="borderless"
 	STREAM_WIDTH=""
 	STREAM_HEIGHT=""
@@ -236,6 +240,48 @@ mlos_run_compositor() {
 	# Qt's own scaling stays off: the display menu decides resolution, and
 	# a compositor-side scale would be applied on top of it.
 	export QT_AUTO_SCREEN_SCALE_FACTOR=0
+
+	# Atomic modesetting is broken on some Intel panels.
+	#
+	# Measured on the reference tablet (Cherry Trail, 8086:22b0, DSI panel):
+	# wlroots' atomic path fails every commit with "Atomic commit failed:
+	# Device or resource busy", 1454 of them in 11 minutes, and each one is a
+	# frame that never reaches the screen.  During a stream that reads as the
+	# picture freezing or not coming back -- and it is silent unless you go
+	# looking in the session log.
+	#
+	# WLR_DRM_NO_ATOMIC makes wlroots use the legacy interface, which these
+	# drivers do handle.  The cost is losing atomic's tear-free presentation
+	# guarantees; a frozen screen is worse.
+	#
+	# DRM_ATOMIC=yes in the config file turns it back on, for hardware where
+	# atomic works and is wanted.
+	if [ "${DRM_ATOMIC:-no}" != "yes" ]; then
+		export WLR_DRM_NO_ATOMIC=1
+		# Modifiers go with it.  The legacy interface cannot describe a
+		# buffer's modifier to the display engine, so a composited frame
+		# allocated with one is silently never presented -- the screen keeps
+		# showing the last frame that *was*, which on this appliance is the
+		# stream, scanned out directly from the client's own buffer.
+		#
+		# What that looks like: the settings panel opens, the compositor says
+		# it is focused and visible, and the screen still shows the stream.
+		# Only the cursor moves, because the cursor is its own plane.
+		export WLR_DRM_NO_MODIFIERS=1
+	fi
+
+	# Escape hatch for the next driver quirk.  COMPOSITOR_ENV in the config
+	# file is a space-separated list of KEY=VALUE passed to the compositor,
+	# so a machine that needs one more knob does not need this script edited.
+	#
+	#   COMPOSITOR_ENV="WLR_SCENE_DISABLE_DIRECT_SCANOUT=1"
+	if [ -n "${COMPOSITOR_ENV:-}" ]; then
+		for kv in $COMPOSITOR_ENV; do
+			case "$kv" in
+				*=*) export "$kv" ;;
+			esac
+		done
+	fi
 
 	# wlroots builds its keymap from these at startup.  Setting them here
 	# rather than only calling `swaymsg input` afterwards means the layout is

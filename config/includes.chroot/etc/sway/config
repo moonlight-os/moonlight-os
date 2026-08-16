@@ -50,14 +50,41 @@ xwayland disable
 # rules the evdev version needed.
 bindsym --to-code Ctrl+Alt+m exec /usr/local/bin/moonlight-panel
 
+# ...and the client is not allowed to take that binding away.
+#
+# Wayland has a direct analogue of the X keyboard grab: a client may ask the
+# compositor to stop processing its own shortcuts, via
+# zwp_keyboard_shortcuts_inhibit.  SDL implements SDL_SetWindowKeyboardGrab
+# with it, and the client turns that on while streaming (capturesyskeys), so
+# by default sway stops honouring the binding above at exactly the moment it
+# is needed -- the same failure the X11 grab caused, in a new protocol.
+#
+# Refusing the inhibitor is what keeps the panel reachable mid-stream.  The
+# cost is that the two combinations bound here no longer reach the host PC;
+# every other key still does.  Under X11 they reached both, because reading
+# /dev/input is passive.
+seat * shortcuts_inhibitor disable
+
 # Panic exit, matching the old session's Ctrl+Alt+Shift+Q.
 bindsym --to-code Ctrl+Alt+Shift+q exit
 
 ### --- window placement ---------------------------------------------------
-# The panel opens over a fullscreen stream, so it has to be in the same layer
-# or it would open behind and look like nothing happened.  Under X11 this took
-# an openbox rule plus xdotool raise calls; here it is a placement rule.
-for_window [app_id="moonlight-panel"] fullscreen enable
+# The panel gets a workspace to itself, and the compositor switches to it as
+# the window appears.
+#
+# It cannot simply open on top.  On this hardware a fullscreen client stays on
+# screen even after sway has un-fullscreened it, marked it invisible and put
+# another fullscreen window in front: the display plane is never updated, so
+# what you see is the stream while sway insists the panel is visible.  None of
+# WLR_SCENE_DISABLE_DIRECT_SCANOUT, WLR_SCENE_DEBUG_DAMAGE=rerender,
+# WLR_DRM_NO_ATOMIC or WLR_DRM_NO_MODIFIERS changes that.  Putting the client
+# on a workspace that is not being displayed does.
+#
+# Done here rather than in moonlight-panel because a script that switches
+# workspace and then spawns the terminal races: sway places a window on
+# whatever is focused when it maps, which is not reliably the workspace the
+# script just asked for.  As one rule on the window itself, there is no gap.
+for_window [app_id="moonlight-panel"] move container to workspace mlos-panel, workspace mlos-panel, fullscreen enable
 
 ### --- notifications -----------------------------------------------------
 # What draws the low-battery warning over a running stream.  It has to be the
