@@ -211,12 +211,37 @@ def op_tailscale_status(args, emit):
     }
 
 
+def op_system_power(args, emit):
+    """Reboot or shut down.
+
+    The action is an enumerated choice, not a command: "reboot" and "poweroff"
+    map to fixed argument vectors here. Accepting a string to run would make
+    this a root shell, which is the one thing this daemon exists not to be.
+    """
+    action = args.get("action")
+    if action not in ("reboot", "poweroff"):
+        raise Error(E_BAD_REQUEST, "action must be reboot or poweroff")
+
+    emit("Shutting down..." if action == "poweroff" else "Rebooting...")
+
+    # No confirmation here on purpose: whether to ask is a question about the
+    # interface, and the interface is the only place that knows whether the
+    # user was asked. A daemon second-guessing its caller would just mean two
+    # confirmations or none.
+    out, err = run(["systemctl", action], timeout=15)
+    if out is None:
+        raise Error(E_FAILED, err)
+
+    return {"action": action}
+
+
 OPS = {
     "ping": op_ping,
     "status": op_status,
     "wifi.list": op_wifi_list,
     "wifi.connect": op_wifi_connect,
     "tailscale.status": op_tailscale_status,
+    "system.power": op_system_power,
 }
 
 # The ops safe to run unattended, for --self-test. Anything that changes the
