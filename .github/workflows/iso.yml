@@ -135,6 +135,27 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      # live-build also caches the bootstrapped rootfs under cache/bootstrap,
+      # and that one must not be carried between runs here.  It is a real
+      # filesystem, so it depends on ownership the cache cannot preserve: the
+      # step below chowns everything to the runner user so the cache can be
+      # saved at all, which rewrites /tmp inside that rootfs away from root.
+      # apt drops to the _apt user to verify signatures and then cannot write
+      # there, so every signed repository fails with
+      #
+      #   Unable to mkstemp /tmp/apt.sig.XXXXXX - GetTempFile (13: Permission denied)
+      #   E: The repository '...' is not signed.
+      #
+      # and live-build aborts.  The trap is that this never breaks the run
+      # that saves the cache, only the next one that restores it -- so it
+      # looks intermittent and unrelated to whatever was merged in between.
+      # Re-bootstrapping costs well under a minute; the package pool, the Go
+      # caches and the Tailscale tarball are what the cache is actually for
+      # and they stay.
+      - name: Drop the bootstrap stage from the cache
+        if: always()
+        run: sudo rm -rf cache/bootstrap
+
       # Parts of cache/ are written by root inside the build containers; the
       # cache post-step runs as the runner user and cannot read those.
       - name: Normalise cache ownership
