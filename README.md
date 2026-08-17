@@ -68,18 +68,18 @@ further 61 MB of GTK, Adwaita icons and ATK that nothing else here wanted —
 happens on your phone, via the QR code.
 
 `9000-moonlight-slim.hook.chroot` removes what the packaging drags in and an
-appliance never opens. Two of those are worth knowing about, because both look
-load-bearing and are not:
+appliance never opens.
 
-- **33 MB of C compiler.** `x11-xserver-utils` — which is where `xrandr` and
-  `xset` come from, so it cannot go — depends on `cpp`, because `xrdb` pipes X
-  resource files through a preprocessor. Nothing here runs `xrdb`. The package
-  stays to satisfy the dependency; `cc1` does not.
-- **~16 MB of PostScript and PDF rendering**, reached by a genuinely silly
-  route: `openbox` → `libobrender` → `imlib2` → `libspectre` → ghostscript,
-  so that imlib2 *could* load a PostScript file as a window decoration. This
-  image turns decorations off. The libraries stay (imlib2 links them at load
-  time); their data does not.
+Two entries in it are now historical, and are kept only because they cost
+nothing and something else may drag the same things back in. Both came in
+through X11 and left with it:
+
+- **33 MB of C compiler**, via `x11-xserver-utils` — where `xrandr` and `xset`
+  came from — depending on `cpp`, because `xrdb` pipes X resource files
+  through a preprocessor. Nothing ever ran `xrdb`.
+- **~16 MB of PostScript and PDF rendering**, by a genuinely silly route:
+  `openbox` → `libobrender` → `imlib2` → `libspectre` → ghostscript, so that
+  imlib2 *could* load a PostScript file as a window decoration.
 
 The `locales` package went too. It had never generated anything — `locale.gen`
 has no active entries, `/usr/lib/locale` holds only `C.utf8`, and
@@ -216,8 +216,8 @@ the lot:
 ssh moonlight@moonlight-os.local moonlight-report > report.txt
 ```
 
-That is hardware, kernel DRM messages, live `xrandr`, VAAPI, Vulkan, the
-Xorg log and Moonlight's own session log. **Streaming → Video problems & logs
+That is hardware, kernel DRM messages, the live output layout, VAAPI, Vulkan,
+and the compositor's and client's own session log. **Streaming → Video problems & logs
 → Copy logs to a USB stick** writes the same thing.
 
 A live boot with no persistence makes new host keys every time, so your
@@ -372,26 +372,34 @@ so the command has to be retyped at the far end.
 `host-utils/README.md` documents the protocol, and `tools/test-usb-auto.py`
 covers the sharing rules.
 
-## The Ctrl+Alt+M hotkey, and USB keyboards
+## The Ctrl+Alt+M hotkey
 
-The settings panel opens on a key combination read straight off `/dev/input`
-by triggerhappy, because a running stream has the X keyboard grabbed and the
-window manager never sees a thing. The kernel still does.
+The settings panel opens on a compositor binding — one line in
+`/etc/sway/config`. A compositor evaluates its bindings before the key reaches
+any client, so a client holding the keyboard cannot hide it.
 
-Two details of that are worth knowing, because both were found the hard way.
+That is a recent simplification, and the shape of what it replaced is worth
+recording because several other things existed only to serve it. Under X11 the
+client held an X keyboard grab while streaming, so the window manager never
+saw the combination at all. Working around that took: a `triggerhappy` daemon
+reading `/dev/input` directly, evdev rules naming the key twice (positionally,
+`KEY_M` is where AZERTY puts the semicolon), a masked `triggerhappy.socket`
+because Debian's udev hand-off is broken for USB keyboards plugged in late, a
+root-to-user hand-off script to recover a `DISPLAY`, an iconify/restore dance
+to make SDL drop the grab, an openbox rule forcing the panel fullscreen so it
+shared a layer with the stream, and `xdotool` polling to raise it. All of it
+is gone.
 
-**The key codes are positional, not lettered.** The key labelled M sits where
-QWERTY has M and where AZERTY has the semicolon, so the trigger file lists
-both `KEY_M` and `KEY_SEMICOLON`.
+**The binding is still positional**, which is the one detail that survived:
+`bindsym --to-code` binds the physical key position, so Ctrl+Alt+M lands on
+the key labelled M under AZERTY too — the same reason the evdev rules had to
+list `KEY_SEMICOLON`.
 
-**`triggerhappy.socket` is masked**, and it has to be. thd learns about input
-devices twice over: a glob at start-up, and udev handing it whatever appears
-later via `th-cmd` and `/run/thd.socket`. The glob only sees what already
-exists, and thd starts early — so on a machine whose keyboard is a USB
-receiver, the keyboard is not in it. That leaves the udev path, and on Debian
-the udev path does not work: `th-cmd` talks to the socket with `SOCK_DGRAM`
-while the socket unit declares `ListenStream`, so every hand-off fails with
-`ENOTCONN`.
+None of the USB-keyboard trouble that used to live here applies any more
+either: `triggerhappy` learned about devices from a start-up glob plus a udev
+hand-off that is broken on Debian, so a keyboard on a USB receiver was often
+invisible to it and the socket had to be masked. The compositor gets its
+devices from libinput and sees hotplugged keyboards without being told.
 
 Nothing shows this on a laptop, where the built-in keyboard is on the i8042
 bus, exists before thd starts, and is caught by the glob — the broken path is
@@ -467,10 +475,11 @@ moonlight-touch --show     # which output, which rotation, which devices
 
 ## Multiple monitors
 
-`xrandr` handles the layout; the **Displays** menu drives it. You pick which
-screen Moonlight opens on, and that screen is marked the RandR primary — SDL
-puts display index 0 on the primary output, so the stream lands there rather
-than on whichever monitor X felt like.
+`swaymsg` handles the layout; the **Displays** menu drives it. You pick which
+screen the client opens on, and a placement rule moves its window there. sway
+has no notion of a primary output, so the appliance's own choice is the answer
+to that question — under X11 this marked the RandR primary and relied on SDL
+putting display index 0 on it.
 
 The menu is two levels and no deeper. The top one is the whole-layout
 decision, built from the screens actually plugged in: **Use eDP-1 only**,
@@ -484,16 +493,17 @@ when only one screen is attached — are not shown at all. With a single screen
 the top level *is* resolution and rotation.
 
 Screens can be **rotated** (for a monitor stood on its end) and **placed**
-relative to the main one — right, left, above or below. Placement uses
-`xrandr --right-of` and friends rather than pixel offsets, because a rotated
-screen is not as wide as its mode says and working that out by hand gets it
-wrong. Resolution is per screen and can be set back to **Automatic**, which is
+relative to the main one — right, left, above or below. sway takes absolute
+positions and has no `--right-of`, so the placement arithmetic that xrandr
+used to do now happens here: a rotated screen is not as wide as its mode says,
+so the anchor's *rotated* size is what the neighbour is placed against. Resolution is per screen and can be set back to **Automatic**, which is
 not the same as picking today's best mode by hand: swap the monitor and an
 override would still pin the old, smaller one.
 
 **Plugging a monitor in or pulling it out is handled on its own.** A watcher
-in the session notices within a couple of seconds and rebuilds the layout for
-whatever is now attached. If the screen Moonlight was drawing on is the one
+in the session waits on the compositor's output events and rebuilds the layout
+for whatever is now attached. It used to poll `xrandr` every couple of seconds,
+which was worse than it sounds — see the design notes. If the screen Moonlight was drawing on is the one
 that went away, it moves to a surviving screen and restarts — it picks its
 display once, at start-up, so nothing else would move it.
 
@@ -527,13 +537,15 @@ that earns its keep — a plug knocked out of the socket is invisible from
 inside a fullscreen app until the machine dies. **Show a test warning now** puts one on
 screen so you can check it lands where you expect.
 
-The overlay is `osd_cat`, and the reason it is that rather than anything
-prettier is stacking: its window is override-redirect, so openbox never
-manages it and it draws above a focused fullscreen Moonlight **without taking
-focus**. Everything else would have to steal focus from the running stream,
-which is worse than the warning. It renders with X core fonts, scaled to the
-screen it lands on, using the scalable Type1 set that already arrives with the
-fonts Qt needs.
+The overlay is a notification, drawn by `mako`. The reason it is a
+notification daemon rather than anything of ours is stacking: a Wayland client
+cannot place itself above other windows, and layer-shell is the protocol that
+exists for the exception. mako draws above a focused fullscreen client
+**without taking focus**, which is the property that matters — anything else
+would steal focus from the running stream, and that is worse than the warning.
+
+Under X11 this was `osd_cat`, whose window is override-redirect, so openbox
+never managed it. Same property, reached a completely different way.
 
 A machine with no battery is detected and the watcher exits; the menu entry
 disappears with it. Peripherals are filtered out by `scope=Device`, so a
@@ -643,33 +655,25 @@ line runs it.
 
 Some of these are non-obvious, and a couple were found the hard way:
 
-- **The settings key is read off `/dev/input`, not from X.** While a stream is
-  running SDL holds an X keyboard grab, so the window manager sees no key
-  combinations at all — a window-manager binding is useless exactly when it
-  is needed. `triggerhappy` reads the evdev devices directly, which a grab
-  cannot hide from. Ctrl+Alt+F12 stays bound in openbox purely as a fallback
-  for when that daemon is not running; binding the same key in both places
-  would only race them against each other.
+- **The settings key is a compositor binding.** Under X11 it could not be:
+  SDL held an X keyboard grab while streaming, so a window-manager binding was
+  useless exactly when it was needed, and the key had to be read off
+  `/dev/input` by a separate daemon. A compositor sees the key first, so the
+  daemon, its evdev rules and the hand-off script are all gone.
 
-- **evdev key codes are positional, not lettered.** `KEY_M` is wherever a US
-  keyboard puts M — on AZERTY that key is `KEY_SEMICOLON`. Both are in the
-  trigger file, or Ctrl+Alt+M would work on some layouts and not others.
-
-- **`thd` trigger lines put the key first,** then modifiers: `KEY_M+KEY_LEFTCTRL`,
-  not the other way round. It also refuses blank lines, one complaint each.
-
-- **The panel iconifies Moonlight while it is open.** Otherwise, under that
-  same keyboard grab, it would appear on screen, take focus, and receive
-  nothing. Iconifying makes SDL drop the grab; it is restored on the way out.
-
-- **openbox applies every matching `<application>` rule in order,** so the
-  `class="*"` catch-all has to come *first*. With it last it quietly undid
-  the per-window rules after them.
+- **Key bindings are positional, not lettered.** `bindsym --to-code` binds the
+  key position, so the key labelled M works on AZERTY, where it would
+  otherwise be the semicolon. The evdev version needed two rules for this.
 
 - **The panel holds a lock directory, and does not `exec` the terminal.**
-  Replacing the shell with `xterm` would drop the `EXIT` trap, so the lock
-  outlived the panel and Ctrl+Alt+M worked exactly once per boot. A lock with
-  no matching window is now treated as stale rather than fatal.
+  Replacing the shell with the terminal would drop the `EXIT` trap, so the
+  lock outlived the panel and Ctrl+Alt+M worked exactly once per boot. A lock
+  with no matching window is now treated as stale rather than fatal.
+
+- **sway's `exec` does not own the process it starts.** `startx` tore the X
+  server down when its client exited; sway does not, so the session script
+  has to end with `swaymsg exit` or the compositor sits there showing an empty
+  desktop and the console menu never comes back.
 
 - **`--no-install-recommends` dropped two things that mattered.**
   `firmware-linux-nonfree` only *recommends* `firmware-intel-graphics`, so
@@ -714,7 +718,7 @@ Some of these are non-obvious, and a couple were found the hard way:
 - **The stream defaults to the screen's own resolution.** Moonlight's own
   default is 1280x720, which on a box wired to a 1080p panel is a blurry
   picture nobody asked for. An empty `STREAM_WIDTH` means "read it off
-  `xrandr`".
+  the compositor".
 
 - **"Automatic" bitrate means deleting the key, not setting it to zero.**
   Moonlight computes a default from the resolution and frame rate only when
@@ -737,11 +741,34 @@ Some of these are non-obvious, and a couple were found the hard way:
   third-party signing key at build time. `build.sh` asks
   `pkgs.tailscale.com` what stable is, or takes `TAILSCALE_VERSION`.
 
-- **X11, not Wayland.** Moonlight's official Linux build is a Qt5 AppImage that
-  ships only the `xcb` platform plugin — no Wayland QPA. Under a wlroots
-  compositor it would run through XWayland anyway, so plain X11 plus `openbox`
-  is both lighter and more predictable. `openbox` is there purely so
-  Moonlight's fullscreen request has a window manager to talk to.
+- **`tailscaled` waits for Wi-Fi, and never gives up.** The unit in that
+  tarball is ordered after `NetworkManager.service`, which is up long before
+  anything has associated — so on a machine with no cable, tailscaled started
+  with no route anywhere, failed, and its `Restart=on-failure` hit systemd's
+  default rate limit within a second or two. It then stayed dead for the rest
+  of the boot and the Tailscale menu reported a daemon that was not
+  responding. The fetched unit is taken as it ships and corrected from
+  `tailscaled.service.d/` beside it: ordered after `network-online.target`
+  (`Wants=`, so an appliance with no network still boots), with no start
+  limit and `Restart=always`. A dispatcher script in
+  `/etc/NetworkManager/dispatcher.d` starts it the moment a connection comes
+  up, which is the first-boot case the ordering cannot cover — there is no
+  saved network to wait for yet, so the user picks one minutes later. It
+  leaves a running daemon alone: restarting on every reconnect would drop the
+  tailnet exactly when it is wanted.
+
+- **Wayland, not X11.** The session is `sway`: compositor, window manager and
+  hotkey daemon in one, where X11 needed Xorg plus openbox plus triggerhappy
+  plus xdotool. This became possible when the client became Selene, built from
+  source with the Wayland QPA, rather than an AppImage shipping only `xcb`.
+  Xwayland is not installed and is disabled in the config: nothing here needs
+  X, so shipping an X server to run nothing would be the only reason it
+  existed.
+
+  The client needs `qt6-wayland` at runtime. Qt dlopens its platform plugin,
+  so nothing links against it and no dependency resolver pulls it in — without
+  it Qt finds no usable platform and the client aborts on start. Selene's
+  package names it explicitly for that reason.
 
 - **A .deb, not an AppImage.** The client is Selene, our fork of moonlight-qt,
   built from source by `build.sh` into a real Debian package and staged in
@@ -776,13 +803,14 @@ Some of these are non-obvious, and a couple were found the hard way:
 - **`wpa_supplicant.service` is deliberately left enabled.** NetworkManager
   D-Bus-activates it; masking it kills Wi-Fi entirely.
 
-- **live-config's `xinit` component is switched off** via
-  `live-config.nocomponents=xinit` on the kernel command line. It installs
+- **live-config's `xinit` component no longer needs switching off.** It used
+  to be disabled on the kernel command line: it installs
   `/etc/profile.d/zz-live-config_xinit.sh`, which runs
-  `while true; do startx; done` from `/etc/profile` — that blocks before
-  `~/.bash_profile` is ever read, so the appliance never starts and you get a
-  bare openbox desktop instead. `/etc/X11/xinit/xinitrc` is also overridden as
-  a safety net, and the installer deletes the snippet on the target disk.
+  `while true; do startx; done` from `/etc/profile`, blocking before
+  `~/.bash_profile` is ever read — so the appliance never started and you got
+  a bare openbox desktop instead. With no X server in the image there is
+  nothing for it to start. The installer still deletes the snippet on the
+  target disk.
 
 - **Settings are written through `sudo`.** `/etc/moonlight-os/moonlight-os.conf`
   is root-owned and the menus run as the session user. Writing it with a plain
@@ -823,7 +851,7 @@ The scripts are POSIX `sh` and readable in one sitting:
 | --------------------- | ------------------------------------------------- |
 | `moonlight-session`   | boot flow: welcome → region → network → X → menu  |
 | `moonlight-welcome`   | live boot's first question: install, or try it?   |
-| `moonlight-xsession`  | the X client: layout, keymap, WM, then Moonlight  |
+| `moonlight-wlsession` | the session sway runs: layout, keymap, then Selene |
 | `moonlight-panel`     | Ctrl+Alt+M: the menu in a terminal over the stream|
 | `moonlight-netsetup`  | Wi-Fi wizard                                      |
 | `moonlight-tailscale` | tailnet login and peer list                       |

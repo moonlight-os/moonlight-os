@@ -2,8 +2,8 @@
 # Moonlight OS boot flow.  Started from ~/.bash_profile on tty1 after
 # autologin.  Owns the whole lifetime of the appliance:
 #
-#   install or try it? -> keyboard -> network up? -> start X -> Moonlight
-#     -> (Moonlight exits) -> menu -> repeat
+#   install or try it? -> keyboard -> network up? -> start sway -> Selene
+#     -> (Selene exits) -> menu -> repeat
 #
 # The first step only happens on a live boot, and only once per boot.  It is
 # first because installing needs none of the steps after it, and answering
@@ -44,11 +44,13 @@ while :; do
 	printf '      Wi-Fi, Tailscale and the installer.\n\n'
 	sleep 4
 
-	if ! startx /usr/local/bin/moonlight-xsession -- :0 vt1 -nolisten tcp \
-			> "$MLOS_STATE/xsession.log" 2>&1; then
+	# sway runs the session itself (see /etc/sway/config, which execs
+	# moonlight-wlsession); when that exits, so does sway.  No display
+	# manager and no startx -- this is the tty we already autologged into.
+	if ! mlos_run_compositor > "$MLOS_STATE/session.log" 2>&1; then
 		clear
 		printf '\n  The graphical session failed to start.\n'
-		printf '  Log: %s\n\n' "$MLOS_STATE/xsession.log"
+		printf '  Log: %s\n\n' "$MLOS_STATE/session.log"
 		if ! mlos_yesno "Moonlight could not start a display.\n\nOpen the maintenance menu?"; then
 			sleep 3
 			continue

@@ -31,7 +31,6 @@
 PATHS="
 /etc/moonlight-os
 /etc/NetworkManager/system-connections
-/etc/X11/xorg.conf.d
 /etc/ssh/sshd_config.d
 /etc/default/keyboard
 /etc/timezone
