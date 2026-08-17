@@ -1,0 +1,29 @@
+[Unit]
+Description=Moonlight OS privileged helper
+Documentation=file:/usr/local/bin/moonlight-helper
+# NetworkManager is what most of the operations talk to. Wanted rather than
+# Required: a machine with no network still needs the panel to come up, not
+# least so it can be used to set the network up.
+Wants=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/moonlight-helper
+Restart=always
+RestartSec=2
+
+# It runs as root because joining a Wi-Fi network and writing a partition
+# table need root, and it exists so that Selene does not. The protection
+# below is what keeps "runs as root" from meaning "can do anything": the
+# daemon has no enumerated operation that touches /home, and no reason to.
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/moonlight-os /var/lib/moonlight-os
+RuntimeDirectory=moonlight-os
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

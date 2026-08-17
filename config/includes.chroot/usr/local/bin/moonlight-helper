@@ -1,0 +1,333 @@
+#!/usr/bin/python3
+"""Do the privileged parts of Moonlight OS on behalf of the client.
+
+The settings panel is moving inside Selene (M4), and Selene runs as the
+unprivileged `moonlight` user while most of what the panel does -- joining a
+Wi-Fi network, logging into Tailscale, writing a partition table -- does not.
+This daemon is the piece in between.
+
+    moonlight-helper              serve until stopped
+    moonlight-helper --self-test  run every read-only op once and exit
+
+WHAT THIS IS NOT
+----------------
+It is not a way to run commands as root.  Every operation is named, its
+arguments are validated here, and the command line is built from those
+arguments rather than from anything the caller sent.  A "run this string" op
+would make this a root shell with extra steps, reachable by anything that can
+open a socket, and no amount of care elsewhere would buy it back.
+
+Adding an operation therefore means writing a handler, not passing a flag
+through.  That is the intended friction.
+
+THE WIRE
+--------
+One JSON object per line, both directions, UTF-8, newline framed.  Dull on
+purpose: the far end is a C++ client that should not need a parser library,
+and the same shape already works between Moonlight OS and its host agent.
+
+    -> {"id": 1, "op": "wifi.connect", "args": {"ssid": "x", "psk": "y"}}
+    <- {"id": 1, "event": "progress", "message": "Associating..."}
+    <- {"id": 1, "ok": true, "result": {...}}
+
+or
+
+    <- {"id": 1, "ok": false, "error": {"code": "bad_request", "message": "..."}}
+
+Every request gets exactly one terminal reply, possibly preceded by progress
+events.  Long operations exist -- installing to disk is not a
+request/response -- so the protocol has room for them from the start rather
+than growing it later.
+"""
+
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import threading
+
+sys.path.insert(0, "/usr/local/lib/moonlight-os")
+
+SOCKET_PATH = "/run/moonlight-os/helper.sock"
+
+# The client is the `moonlight` user; the socket is opened root-owned and
+# group-readable so that user and nothing else can reach it.
+SOCKET_GROUP = "moonlight"
+SOCKET_MODE = 0o660
+
+PROTOCOL_VERSION = 1
+
+# Error codes are part of the contract: the panel switches on them to decide
+# what to show, so they are strings and they do not change meaning.
+E_BAD_REQUEST = "bad_request"
+E_UNKNOWN_OP = "unknown_op"
+E_FAILED = "failed"
+E_UNAVAILABLE = "unavailable"  # the underlying tool is not on this image
+
+SSID_MAX = 32          # IEEE 802.11
+PSK_MIN, PSK_MAX = 8, 63
+
+
+def log(msg):
+    print("moonlight-helper: %s" % msg, file=sys.stderr, flush=True)
+
+
+def run(argv, timeout=30, input_text=None):
+    """Run a command built from our own arguments. Never a shell."""
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            input=input_text,
+        )
+    except FileNotFoundError:
+        return None, "%s is not installed" % argv[0]
+    except subprocess.TimeoutExpired:
+        return None, "%s timed out" % argv[0]
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return None, detail[-1] if detail else "%s failed" % argv[0]
+
+    return proc.stdout, None
+
+
+class Error(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+# --------------------------------------------------------------- operations --
+#
+# Each takes (args, emit) and returns a JSON-serialisable result. `emit` sends
+# a progress event and is what keeps a slow operation from looking hung.
+
+
+def op_ping(args, emit):
+    return {"version": PROTOCOL_VERSION}
+
+
+def op_status(args, emit):
+    out, _ = run(["hostname"], timeout=5)
+    hostname = (out or "").strip()
+
+    ip = None
+    out, _ = run(["ip", "-4", "-o", "addr", "show", "scope", "global"], timeout=5)
+    if out:
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 4:
+                ip = parts[3].split("/")[0]
+                break
+
+    wifi = None
+    out, _ = run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"], timeout=5)
+    if out:
+        for line in out.splitlines():
+            name, _, kind = line.partition(":")
+            if "wireless" in kind:
+                wifi = name
+                break
+
+    return {"hostname": hostname, "address": ip, "wifi": wifi}
+
+
+def op_wifi_list(args, emit):
+    emit("Scanning...")
+    # --rescan yes so the list reflects now rather than whatever NetworkManager
+    # last happened to see, which on a machine that just booted is nothing.
+    out, err = run(
+        ["nmcli", "--terse", "--fields", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "yes"],
+        timeout=45,
+    )
+    if out is None:
+        raise Error(E_UNAVAILABLE, err)
+
+    seen = {}
+    for line in out.splitlines():
+        # nmcli escapes colons inside fields as \:, so split on unescaped ones.
+        fields = re.split(r"(?<!\\):", line)
+        if len(fields) < 3:
+            continue
+        ssid = fields[0].replace("\\:", ":")
+        if not ssid:
+            continue  # hidden network: nothing to show and nothing to click
+        try:
+            signal = int(fields[1])
+        except ValueError:
+            signal = 0
+        secure = fields[2] not in ("", "--")
+        # The same SSID appears once per band and per AP. Keep the strongest.
+        if ssid not in seen or signal > seen[ssid]["signal"]:
+            seen[ssid] = {"ssid": ssid, "signal": signal, "secure": secure}
+
+    return {"networks": sorted(seen.values(), key=lambda n: -n["signal"])}
+
+
+def op_wifi_connect(args, emit):
+    ssid = args.get("ssid")
+    psk = args.get("psk")
+
+    if not isinstance(ssid, str) or not 0 < len(ssid) <= SSID_MAX:
+        raise Error(E_BAD_REQUEST, "ssid must be 1 to %d characters" % SSID_MAX)
+    if psk is not None:
+        if not isinstance(psk, str) or not PSK_MIN <= len(psk) <= PSK_MAX:
+            raise Error(E_BAD_REQUEST, "psk must be %d to %d characters" % (PSK_MIN, PSK_MAX))
+
+    emit("Connecting to %s..." % ssid)
+
+    argv = ["nmcli", "device", "wifi", "connect", ssid]
+    if psk:
+        argv += ["password", psk]
+
+    out, err = run(argv, timeout=60)
+    if out is None:
+        raise Error(E_FAILED, err)
+
+    return op_status({}, emit)
+
+
+def op_tailscale_status(args, emit):
+    out, err = run(["tailscale", "status", "--json"], timeout=15)
+    if out is None:
+        raise Error(E_UNAVAILABLE, err)
+
+    try:
+        status = json.loads(out)
+    except ValueError:
+        raise Error(E_FAILED, "tailscale returned something that is not JSON")
+
+    self_node = status.get("Self") or {}
+    return {
+        "state": status.get("BackendState"),
+        "name": self_node.get("DNSName", "").rstrip("."),
+        "addresses": self_node.get("TailscaleIPs") or [],
+    }
+
+
+OPS = {
+    "ping": op_ping,
+    "status": op_status,
+    "wifi.list": op_wifi_list,
+    "wifi.connect": op_wifi_connect,
+    "tailscale.status": op_tailscale_status,
+}
+
+# The ops safe to run unattended, for --self-test. Anything that changes the
+# machine is deliberately absent.
+READ_ONLY = ("ping", "status", "wifi.list", "tailscale.status")
+
+
+# ------------------------------------------------------------------- serving --
+
+
+def handle_client(conn):
+    with conn, conn.makefile("rwb") as stream:
+        for raw in stream:
+            try:
+                request = json.loads(raw)
+                if not isinstance(request, dict):
+                    raise ValueError
+            except ValueError:
+                # No id to answer with, so this is all that can be said.
+                stream.write(json.dumps({
+                    "ok": False,
+                    "error": {"code": E_BAD_REQUEST, "message": "not a JSON object"},
+                }).encode() + b"\n")
+                stream.flush()
+                continue
+
+            req_id = request.get("id")
+            op_name = request.get("op")
+            args = request.get("args") or {}
+
+            def emit(message):
+                stream.write(json.dumps({
+                    "id": req_id, "event": "progress", "message": message,
+                }).encode() + b"\n")
+                stream.flush()
+
+            handler = OPS.get(op_name)
+            if handler is None:
+                reply = {"id": req_id, "ok": False,
+                         "error": {"code": E_UNKNOWN_OP, "message": "no such operation"}}
+            elif not isinstance(args, dict):
+                reply = {"id": req_id, "ok": False,
+                         "error": {"code": E_BAD_REQUEST, "message": "args must be an object"}}
+            else:
+                try:
+                    reply = {"id": req_id, "ok": True, "result": handler(args, emit)}
+                except Error as err:
+                    reply = {"id": req_id, "ok": False,
+                             "error": {"code": err.code, "message": err.message}}
+                except Exception as err:  # noqa: BLE001 - a handler bug must not kill the daemon
+                    log("%s raised %r" % (op_name, err))
+                    reply = {"id": req_id, "ok": False,
+                             "error": {"code": E_FAILED, "message": "internal error"}}
+
+            stream.write(json.dumps(reply).encode() + b"\n")
+            stream.flush()
+
+
+def serve():
+    os.makedirs(os.path.dirname(SOCKET_PATH), mode=0o755, exist_ok=True)
+
+    # A socket left behind by a killed daemon would make bind() fail; nothing
+    # else owns this path, so removing it is safe rather than presumptuous.
+    try:
+        os.unlink(SOCKET_PATH)
+    except FileNotFoundError:
+        pass
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(SOCKET_PATH)
+
+    # Ownership before listen(), so there is no window where the socket exists
+    # and is reachable by more than it should be.
+    try:
+        import grp
+        os.chown(SOCKET_PATH, 0, grp.getgrnam(SOCKET_GROUP).gr_gid)
+    except (KeyError, OSError) as err:
+        log("could not set socket group: %s" % err)
+    os.chmod(SOCKET_PATH, SOCKET_MODE)
+
+    server.listen(4)
+    log("listening on %s" % SOCKET_PATH)
+
+    while True:
+        conn, _ = server.accept()
+        # A thread per connection: there is one client in practice, and a
+        # blocking op like a Wi-Fi scan must not stall a status request.
+        threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
+
+
+def self_test():
+    failures = 0
+    for name in READ_ONLY:
+        try:
+            result = OPS[name]({}, lambda message: None)
+            print("%-18s ok  %s" % (name, json.dumps(result)[:100]))
+        except Error as err:
+            print("%-18s %s: %s" % (name, err.code, err.message))
+            # An absent tool is a fact about the image, not a failure of this.
+            if err.code != E_UNAVAILABLE:
+                failures += 1
+        except Exception as err:  # noqa: BLE001
+            print("%-18s raised %r" % (name, err))
+            failures += 1
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(self_test())
+    try:
+        serve()
+    except KeyboardInterrupt:
+        pass
