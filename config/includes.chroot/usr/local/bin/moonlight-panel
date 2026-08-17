@@ -38,13 +38,22 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 	# -- without this the key would silently stop working for the rest of
 	# the session -- or one that started a moment ago and has not mapped
 	# its window yet.  Only the first deserves the lock taken off it.
-	if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-		rmdir "$LOCK" 2>/dev/null
-		mkdir "$LOCK" 2>/dev/null || exit 0
-	else
+	#
+	# The pid in the lock separates the two exactly.  This used to be an age
+	# test (reclaim only a lock older than a minute), which cannot tell a
+	# dead panel from a slow one and therefore swallowed every Ctrl+Alt+M
+	# for a whole minute after any panel that was killed rather than closed
+	# -- the key doing nothing at all, with nothing on screen to say why.
+	# That is what made the panel feel unreliable in use.
+	pid="$(cat "$LOCK/pid" 2>/dev/null)"
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
 		exit 0
 	fi
+	rm -f "$LOCK/pid" 2>/dev/null
+	rmdir "$LOCK" 2>/dev/null
+	mkdir "$LOCK" 2>/dev/null || exit 0
 fi
+echo $$ > "$LOCK/pid" 2>/dev/null || true
 
 # The panel opens on a workspace of its own.
 #
@@ -103,11 +112,52 @@ except Exception:
 '
 }
 
+# The window to hand focus back to, captured the same way and at the same
+# moment.  Going back by workspace alone is not enough -- see restore().
+prev_con() {
+	swaymsg -t get_tree 2>/dev/null | python3 -c '
+import json, sys
+def walk(n):
+    if n.get("focused") and n.get("pid"):
+        print(n.get("id"))
+        return True
+    for k in ("nodes", "floating_nodes"):
+        for c in n.get(k, []):
+            if walk(c):
+                return True
+    return False
+try:
+    walk(json.load(sys.stdin))
+except Exception:
+    pass
+'
+}
+
 PREV="$(prev_ws)"
+PREV_CON="$(prev_con)"
 [ "$PREV" = "$PANEL_WS" ] && PREV=""
 
 restore() {
 	swaymsg workspace "${PREV:-1}" >/dev/null 2>&1 || true
+
+	# Switching workspace brings the stream back and gives it keyboard
+	# focus, and that is where this used to stop -- leaving the client
+	# visible but with the compositor still drawing its own cursor over it,
+	# so the first click after closing the panel was spent waking the
+	# stream up instead of reaching the host.
+	#
+	# Two things are missing at that point.  The workspace switch focuses
+	# whatever sway last had there, which is not necessarily the client, so
+	# refocus the exact window that was focused before the panel opened.
+	# And pointer focus does not follow it: the session sets
+	# focus_follows_mouse no, so the client gets no enter event until the
+	# pointer actually moves.  Nudging the cursor one pixel and back is
+	# enough to deliver one, and lands it where it already was.
+	[ -n "$PREV_CON" ] && swaymsg "[con_id=$PREV_CON] focus" >/dev/null 2>&1
+	swaymsg 'seat - cursor move 1 0' >/dev/null 2>&1 || true
+	swaymsg 'seat - cursor move -1 0' >/dev/null 2>&1 || true
+
+	rm -f "$LOCK/pid" 2>/dev/null
 	rmdir "$LOCK" 2>/dev/null
 }
 trap restore EXIT INT TERM HUP
