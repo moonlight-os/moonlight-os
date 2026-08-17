@@ -741,6 +741,22 @@ Some of these are non-obvious, and a couple were found the hard way:
   third-party signing key at build time. `build.sh` asks
   `pkgs.tailscale.com` what stable is, or takes `TAILSCALE_VERSION`.
 
+- **`tailscaled` waits for Wi-Fi, and never gives up.** The unit in that
+  tarball is ordered after `NetworkManager.service`, which is up long before
+  anything has associated — so on a machine with no cable, tailscaled started
+  with no route anywhere, failed, and its `Restart=on-failure` hit systemd's
+  default rate limit within a second or two. It then stayed dead for the rest
+  of the boot and the Tailscale menu reported a daemon that was not
+  responding. The fetched unit is taken as it ships and corrected from
+  `tailscaled.service.d/` beside it: ordered after `network-online.target`
+  (`Wants=`, so an appliance with no network still boots), with no start
+  limit and `Restart=always`. A dispatcher script in
+  `/etc/NetworkManager/dispatcher.d` starts it the moment a connection comes
+  up, which is the first-boot case the ordering cannot cover — there is no
+  saved network to wait for yet, so the user picks one minutes later. It
+  leaves a running daemon alone: restarting on every reconnect would drop the
+  tailnet exactly when it is wanted.
+
 - **Wayland, not X11.** The session is `sway`: compositor, window manager and
   hotkey daemon in one, where X11 needed Xorg plus openbox plus triggerhappy
   plus xdotool. This became possible when the client became Selene, built from

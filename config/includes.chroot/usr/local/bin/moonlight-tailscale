@@ -153,6 +153,15 @@ status_report() {
 }
 
 if ! ts_ready; then
+	# Ordering and Restart= keep the daemon alive by themselves (see
+	# tailscaled.service.d), but this menu is the one place a person is
+	# already asking for it, and the ten-second gap between restarts is
+	# long enough to land in.  Ask for it once, then wait again.
+	mlos_root systemctl reset-failed tailscaled >/dev/null 2>&1 || true
+	mlos_root systemctl start tailscaled >/dev/null 2>&1 || true
+fi
+
+if ! ts_ready; then
 	mlos_msg "The Tailscale daemon is not responding.\n\nIt may still be starting up -- try again in a moment."
 	exit 0
 fi

@@ -5,8 +5,13 @@ set -e
 
 systemctl set-default multi-user.target
 
-for svc in NetworkManager avahi-daemon usbipd systemd-timesyncd ssh \
-           bluetooth; do
+# NetworkManager-wait-online is what makes network-online.target mean
+# "associated" rather than "the daemon that manages associations is up".
+# The package enables it on its own, but two units here are ordered after
+# that target and one of them is tailscaled, which comes up dead when it
+# starts before Wi-Fi -- so do not leave it to the package's presets.
+for svc in NetworkManager NetworkManager-wait-online avahi-daemon usbipd \
+           systemd-timesyncd ssh bluetooth; do
 	systemctl enable "$svc" 2>/dev/null || true
 done
 
@@ -20,6 +25,9 @@ systemctl enable moonlight-usb-auto 2>/dev/null || true
 # Tailscale comes from the upstream tarball, so its unit is dropped into
 # /etc/systemd/system by build.sh rather than installed by a package -- it
 # has no postinst to enable itself.  The daemon idles until someone logs in.
+# That unit is taken as it ships and corrected from tailscaled.service.d
+# beside it, which is where the ordering against Wi-Fi lives -- editing the
+# fetched copy would only be undone by the next build.
 if [ -f /etc/systemd/system/tailscaled.service ]; then
 	systemctl enable tailscaled 2>/dev/null || true
 	install -d -m 0700 /var/lib/tailscale
