@@ -453,6 +453,153 @@ def op_bluetooth_power(args, emit):
     return op_bluetooth_status({}, emit)
 
 
+# ------------------------------------------------------------------------ usb --
+#
+# Making a wheel, a HOTAS or a licence dongle plugged in here appear on the
+# host PC.  Controllers, keyboards and mice need none of this -- the stream
+# already forwards them, better than USB/IP would.
+#
+# The device policy is not reimplemented here.  `mlos_host` already decides
+# what may be handed over and, more importantly, why something may not be, and
+# the shell menu has been showing those reasons for as long as it has existed.
+# Two answers to "why is my wheel not shared" is one too many.
+
+
+def usb_module():
+    """mlos_host, or a clear refusal if this image has no host-utils."""
+    try:
+        import mlos_host
+    except ImportError:
+        raise Error(E_UNAVAILABLE, "USB sharing is not installed in this image")
+    return mlos_host
+
+
+def usb_busid(args, mh):
+    busid = args.get("busid")
+    if not isinstance(busid, str) or not mh.BUSID_RE.match(busid):
+        raise Error(E_BAD_REQUEST, "busid must be a USB bus id")
+    return busid
+
+
+def usb_state(mh):
+    """Every device, with what is true of it and why."""
+    bound = mh.bound_busids()
+    addr, _, token = mh.host_settings()
+
+    devices = [
+        {
+            "busid": dev.busid,
+            "label": dev.label,
+            "shared": dev.busid in bound,
+            # An empty reason is the whole test for "may be handed over";
+            # `protected` is the subset that no policy can override.
+            "reason": dev.reason,
+            "protected": dev.protected,
+        }
+        for dev in mh.devices()
+    ]
+
+    # Shared first, then shareable, then the ones with a reason -- so what you
+    # came to change is at the top and the explanations are below it.
+    devices.sort(key=lambda d: (not d["shared"], bool(d["reason"]), d["label"].lower()))
+
+    return {
+        "devices": devices,
+        # Paired means the host PC runs the agent and picks devices up on its
+        # own. Without it sharing still works, but somebody types a usbip
+        # command over there, which the panel cannot do for them.
+        "paired": bool(addr and token),
+    }
+
+
+def op_usb_list(args, emit):
+    return usb_state(usb_module())
+
+
+def op_usb_share(args, emit):
+    mh = usb_module()
+    busid = usb_busid(args, mh)
+
+    device = next((d for d in mh.devices() if d.busid == busid), None)
+    if device is None:
+        raise Error(E_BAD_REQUEST, "no such device")
+    if device.protected:
+        # The boot medium and the interface we are talking to the host over.
+        # Handing either across would take the machine down with it, so this
+        # is refused here as well as filtered in the interface -- a rule worth
+        # having in both places.
+        raise Error(E_BAD_REQUEST, "that one cannot be shared: %s" % device.reason)
+
+    if not mh.ensure_daemon():
+        raise Error(E_UNAVAILABLE, "the USB/IP daemon is not running")
+
+    emit("Sharing %s..." % device.label)
+    okay, err = mh.bind(busid)
+    if not okay:
+        raise Error(E_FAILED, err or "could not share that device")
+
+    # Same lesson as Bluetooth: ask the daemon what it is exporting rather
+    # than believe the command that was supposed to make it so.
+    if busid not in mh.bound_busids():
+        raise Error(E_FAILED, "%s did not come up as shared" % device.label)
+
+    result = usb_state(mh)
+    if result["paired"]:
+        emit("Telling the host PC...")
+        try:
+            with mh.client_from_conf() as client:
+                client.sync(mh.offered())
+        except Exception as err:  # noqa: BLE001 - the sharing worked regardless
+            # Exported here but not picked up there is a real, recoverable
+            # state, and it is not the same failure as not sharing at all.
+            result["message"] = "Shared, but the host PC did not answer: %s" % err
+    else:
+        result["message"] = "Shared. The host PC is not paired, so attach it there by hand."
+
+    return result
+
+
+def op_usb_unshare(args, emit):
+    mh = usb_module()
+    busid = usb_busid(args, mh)
+
+    emit("Stopping...")
+    mh.unbind(busid)
+    if busid in mh.bound_busids():
+        raise Error(E_FAILED, "that device is still shared")
+
+    result = usb_state(mh)
+    if result["paired"]:
+        try:
+            with mh.client_from_conf() as client:
+                client.sync(mh.offered())
+        except Exception as err:  # noqa: BLE001
+            log("could not tell the host PC about the unshare: %r" % err)
+
+    return result
+
+
+def op_usb_handback(args, emit):
+    """Take everything back from the host PC at once."""
+    mh = usb_module()
+
+    addr, _, token = mh.host_settings()
+    if not (addr and token):
+        raise Error(E_UNAVAILABLE, "no host PC is paired")
+
+    emit("Asking the host PC to let go...")
+    try:
+        with mh.client_from_conf() as client:
+            client.detach_all()
+    except Exception as err:  # noqa: BLE001
+        raise Error(E_FAILED, "the host PC did not answer: %s" % err)
+
+    for busid in list(mh.bound_busids()):
+        mh.unbind(busid)
+
+    return usb_state(mh)
+
+
 def op_system_power(args, emit):
     """Reboot or shut down.
 
@@ -491,11 +638,16 @@ OPS = {
     "bluetooth.disconnect": op_bluetooth_disconnect,
     "bluetooth.forget": op_bluetooth_forget,
     "bluetooth.power": op_bluetooth_power,
+    "usb.list": op_usb_list,
+    "usb.share": op_usb_share,
+    "usb.unshare": op_usb_unshare,
+    "usb.handback": op_usb_handback,
 }
 
 # The ops safe to run unattended, for --self-test. Anything that changes the
 # machine is deliberately absent.
-READ_ONLY = ("ping", "status", "wifi.list", "tailscale.status", "bluetooth.status")
+READ_ONLY = ("ping", "status", "wifi.list", "tailscale.status", "bluetooth.status",
+             "usb.list")
 
 
 # ------------------------------------------------------------------- serving --
