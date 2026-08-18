@@ -258,12 +258,27 @@ def bt_adapter():
     return True, "Powered: yes" in (out or "")
 
 
+def bt_anonymous(mac, name):
+    """Did this device tell us a name, or is bluez showing us its address?
+
+    A device with no name of its own is listed as its own address with the
+    colons turned into dashes, so that is the tell.
+    """
+    return not name or name.replace("-", ":").upper() == mac.upper()
+
+
 def bt_devices():
-    """Every known device, each with what is currently true of it.
+    """Every device worth showing, each with what is currently true of it.
 
     Three list calls rather than `info` per device: after a scan in a busy
     room the device count is unbounded, and the three set memberships are the
     only properties the panel shows.
+
+    Devices that never gave a name are left out unless they are already ours.
+    A scan in a flat turns up thirty radios, and twenty-one of them are the
+    neighbours' phones, tags and televisions advertising nothing but an
+    address -- which is not something anyone can pick a headset out of.  What
+    you want to pair announces itself; that is what pairing mode is for.
     """
     known, _ = run([BT, "devices"], timeout=15)
     paired, _ = run([BT, "devices", "Paired"], timeout=15)
@@ -273,20 +288,24 @@ def bt_devices():
     paired = set(bt_parse(paired))
     connected = set(bt_parse(connected))
 
-    devices = [
-        {
+    devices = []
+    hidden = 0
+    for mac, name in names.items():
+        ours = mac in paired or mac in connected
+        if bt_anonymous(mac, name) and not ours:
+            hidden += 1
+            continue
+        devices.append({
             "mac": mac,
             "name": name or mac,
             "paired": mac in paired,
             "connected": mac in connected,
-        }
-        for mac, name in names.items()
-    ]
+        })
 
     # Connected first, then paired, then whatever the last scan turned up,
     # because that is the order they are likely to be wanted in.
     devices.sort(key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
-    return {"devices": devices}
+    return {"devices": devices, "hidden": hidden}
 
 
 def op_bluetooth_status(args, emit):
@@ -318,7 +337,13 @@ def op_bluetooth_scan(args, emit):
     if out is None:
         log("scan failed: %s" % err)
 
-    return bt_devices()
+    result = bt_devices()
+    # Without this a scan in a busy room finds thirty things and shows two,
+    # which looks like a scan that did not work.
+    if result["hidden"]:
+        result["message"] = ("%d other device%s nearby did not give a name."
+                             % (result["hidden"], "" if result["hidden"] == 1 else "s"))
+    return result
 
 
 def bt_reason(out):
