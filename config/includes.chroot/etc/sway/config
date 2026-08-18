@@ -50,6 +50,15 @@ xwayland disable
 # rules the evdev version needed.
 bindsym --to-code Ctrl+Alt+m exec /usr/local/bin/moonlight-panel
 
+# The panel Selene draws itself, on a second key while it is still growing.
+#
+# It is the same panel the client shows over a stream, and the intention is
+# that it takes Ctrl+Alt+M outright.  It cannot yet: the terminal menu above
+# also does displays, sound, USB, region, battery, backup and install-to-disk,
+# and moving the key before those move would take them away from anyone in a
+# session.  So both exist, on two keys, until the panel has caught up.
+bindsym --to-code Ctrl+Alt+n exec /usr/bin/selene panel
+
 # ...and the client is not allowed to take that binding away.
 #
 # Wayland has a direct analogue of the X keyboard grab: a client may ask the
