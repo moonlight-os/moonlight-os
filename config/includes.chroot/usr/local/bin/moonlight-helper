@@ -211,6 +211,223 @@ def op_tailscale_status(args, emit):
     }
 
 
+# ------------------------------------------------------------------ bluetooth --
+#
+# bluetoothctl is an interactive shell by design, and the shell menu drove it
+# by piping a script full of sleeps at it and grepping the transcript. None of
+# that is needed non-interactively: `--timeout` bounds a scan, and every other
+# command below returns when the operation it started has actually finished.
+
+
+BT = "bluetoothctl"
+
+# Addresses come back to us from a list we produced, but they still go on a
+# command line, so they are checked rather than trusted. Nothing is ever
+# pasted into a shell -- this refuses garbage by name instead of running it.
+MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
+
+SCAN_MIN, SCAN_MAX, SCAN_DEFAULT = 5, 30, 12
+
+
+def bt_mac(args):
+    mac = args.get("mac")
+    if not isinstance(mac, str) or not MAC_RE.match(mac):
+        raise Error(E_BAD_REQUEST, "mac must be a Bluetooth address")
+    return mac.upper()
+
+
+def bt_parse(out):
+    """{mac: name} from a `bluetoothctl devices` listing."""
+    found = {}
+    for line in (out or "").splitlines():
+        parts = line.split(" ", 2)
+        if len(parts) == 3 and parts[0] == "Device" and MAC_RE.match(parts[1]):
+            found[parts[1].upper()] = parts[2].strip()
+    return found
+
+
+def bt_adapter():
+    """(present, powered). A machine with no radio is a fact, not a failure."""
+    out, err = run([BT, "list"], timeout=10)
+    if out is None:
+        raise Error(E_UNAVAILABLE, err)
+    if not out.strip():
+        return False, False
+
+    out, _ = run([BT, "show"], timeout=10)
+    return True, "Powered: yes" in (out or "")
+
+
+def bt_devices():
+    """Every known device, each with what is currently true of it.
+
+    Three list calls rather than `info` per device: after a scan in a busy
+    room the device count is unbounded, and the three set memberships are the
+    only properties the panel shows.
+    """
+    known, _ = run([BT, "devices"], timeout=15)
+    paired, _ = run([BT, "devices", "Paired"], timeout=15)
+    connected, _ = run([BT, "devices", "Connected"], timeout=15)
+
+    names = bt_parse(known)
+    paired = set(bt_parse(paired))
+    connected = set(bt_parse(connected))
+
+    devices = [
+        {
+            "mac": mac,
+            "name": name or mac,
+            "paired": mac in paired,
+            "connected": mac in connected,
+        }
+        for mac, name in names.items()
+    ]
+
+    # Connected first, then paired, then whatever the last scan turned up,
+    # because that is the order they are likely to be wanted in.
+    devices.sort(key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
+    return {"devices": devices}
+
+
+def op_bluetooth_status(args, emit):
+    present, powered = bt_adapter()
+    result = {"present": present, "powered": powered, "devices": []}
+    if present and powered:
+        result.update(bt_devices())
+    return result
+
+
+def op_bluetooth_scan(args, emit):
+    present, powered = bt_adapter()
+    if not present:
+        raise Error(E_UNAVAILABLE, "this machine has no Bluetooth adapter")
+    if not powered:
+        raise Error(E_FAILED, "Bluetooth is turned off")
+
+    seconds = args.get("seconds", SCAN_DEFAULT)
+    if not isinstance(seconds, int) or isinstance(seconds, bool) or not SCAN_MIN <= seconds <= SCAN_MAX:
+        raise Error(E_BAD_REQUEST, "seconds must be %d to %d" % (SCAN_MIN, SCAN_MAX))
+
+    emit("Looking for devices for %d seconds..." % seconds)
+
+    # --timeout ends discovery on its own, so nothing here has to decide when
+    # to stop it -- and a caller that goes away cannot leave the radio
+    # scanning forever. Failure is not fatal: whatever was already known is
+    # still worth returning.
+    out, err = run([BT, "--timeout", str(seconds), "scan", "on"], timeout=seconds + 20)
+    if out is None:
+        log("scan failed: %s" % err)
+
+    return bt_devices()
+
+
+def bt_reason(out):
+    """The line bluetoothctl printed saying why, if it printed one."""
+    for line in reversed((out or "").splitlines()):
+        line = line.strip()
+        if line.startswith("Failed to") and ":" in line:
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def bt_verify(mac, field, expected, out):
+    """Did the thing actually happen?
+
+    bluetoothctl is not usable as a verdict.  Connecting to a device that is
+    switched off prints "Attempting to connect", says nothing further, and
+    exits 0 after its timeout -- so exit status and output between them report
+    success for a device that is not there.  The device's own state is the only
+    honest answer, and we are fetching it anyway to return it.
+    """
+    result = bt_devices()
+    device = next((d for d in result["devices"] if d["mac"] == mac), None)
+
+    if device is None:
+        # Not listed at all. Nothing can be connected to a device bluez has
+        # forgotten, so that is only a failure if we wanted it connected.
+        if not expected:
+            return result
+        raise Error(E_FAILED, "that device is no longer there")
+
+    if device[field] == expected:
+        return result
+
+    raise Error(E_FAILED, bt_reason(out) or
+                "%s did not answer. Check that it is switched on and in range." % device["name"])
+
+
+def op_bluetooth_pair(args, emit):
+    """Pair, trust, and connect -- which is one intention, not three.
+
+    Trusting is what lets the device come back by itself after a reboot, and
+    a controller that has to be re-paired every morning is indistinguishable
+    from one that does not work. Nobody pairing a gamepad wants the other
+    two steps as separate menu entries.
+    """
+    mac = bt_mac(args)
+
+    emit("Pairing...")
+    # NoInputNoOutput is the capability this appliance actually has while a
+    # game is on screen: there is no way to show a passkey and no way to
+    # confirm one, so anything needing them cannot be paired from here.
+    out, err = run([BT, "--agent", "NoInputNoOutput", "--timeout", "40", "pair", mac], timeout=60)
+    if out is None:
+        raise Error(E_FAILED, err)
+    bt_verify(mac, "paired", True, out)
+
+    emit("Trusting...")
+    run([BT, "trust", mac], timeout=15)
+
+    emit("Connecting...")
+    out, _ = run([BT, "--timeout", "20", "connect", mac], timeout=40)
+
+    # Paired but not connected is a real, recoverable state: the device is
+    # remembered and the panel can offer Connect. Failing here would send the
+    # user round the pairing loop again for something already done.
+    result = bt_devices()
+    for device in result["devices"]:
+        if device["mac"] == mac and not device["connected"]:
+            result["message"] = "Paired, but it has not connected yet -- try Connect."
+    return result
+
+
+def op_bluetooth_connect(args, emit):
+    mac = bt_mac(args)
+    emit("Connecting...")
+    out, err = run([BT, "--timeout", "20", "connect", mac], timeout=40)
+    if out is None:
+        raise Error(E_FAILED, err)
+    return bt_verify(mac, "connected", True, out)
+
+
+def op_bluetooth_disconnect(args, emit):
+    mac = bt_mac(args)
+    out, err = run([BT, "--timeout", "20", "disconnect", mac], timeout=40)
+    if out is None:
+        raise Error(E_FAILED, err)
+    return bt_verify(mac, "connected", False, out)
+
+
+def op_bluetooth_forget(args, emit):
+    mac = bt_mac(args)
+    out, err = run([BT, "remove", mac], timeout=20)
+    if out is None:
+        raise Error(E_FAILED, err)
+    return bt_devices()
+
+
+def op_bluetooth_power(args, emit):
+    on = args.get("on")
+    if not isinstance(on, bool):
+        raise Error(E_BAD_REQUEST, "on must be true or false")
+
+    out, err = run([BT, "power", "on" if on else "off"], timeout=15)
+    if out is None:
+        raise Error(E_FAILED, err)
+
+    return op_bluetooth_status({}, emit)
+
+
 def op_system_power(args, emit):
     """Reboot or shut down.
 
@@ -242,11 +459,18 @@ OPS = {
     "wifi.connect": op_wifi_connect,
     "tailscale.status": op_tailscale_status,
     "system.power": op_system_power,
+    "bluetooth.status": op_bluetooth_status,
+    "bluetooth.scan": op_bluetooth_scan,
+    "bluetooth.pair": op_bluetooth_pair,
+    "bluetooth.connect": op_bluetooth_connect,
+    "bluetooth.disconnect": op_bluetooth_disconnect,
+    "bluetooth.forget": op_bluetooth_forget,
+    "bluetooth.power": op_bluetooth_power,
 }
 
 # The ops safe to run unattended, for --self-test. Anything that changes the
 # machine is deliberately absent.
-READ_ONLY = ("ping", "status", "wifi.list", "tailscale.status")
+READ_ONLY = ("ping", "status", "wifi.list", "tailscale.status", "bluetooth.status")
 
 
 # ------------------------------------------------------------------- serving --
