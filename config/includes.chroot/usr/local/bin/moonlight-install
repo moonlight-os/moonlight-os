@@ -59,6 +59,23 @@ pick_disk() {
 		}' \
 		| grep -v '^/dev/loop' > "$list"
 
+	# The native panel already made this choice. Revalidate it against the
+	# current inventory and the boot-medium exclusion, then continue directly
+	# to confirmation instead of asking for the same disk twice.
+	if [ -n "${MLOS_INSTALL_DEVICE:-}" ]; then
+		while IFS= read -r line; do
+			dev=$(printf '%s' "$line" | awk '{print $1}')
+			if [ "$dev" = "$MLOS_INSTALL_DEVICE" ] && [ "$dev" != "$src" ]; then
+				rm -f "$list"
+				printf '%s' "$dev"
+				return 0
+			fi
+		done < "$list"
+		rm -f "$list"
+		mlos_msg "The disk selected in the control centre is no longer available. Nothing was changed."
+		return 1
+	fi
+
 	menu=""
 	n=0
 	while IFS= read -r line; do

@@ -27,6 +27,22 @@ swaymsg -t get_outputs > "$MLOS_SNAPSHOT" 2>/dev/null || true
 # Rebuild the layout for whatever is plugged in right now.
 moonlight-displays --apply
 
+# First-run belongs inside the compositor: the same themed, pointer-friendly
+# interface can explain work and errors instead of dropping users through a
+# chain of console prompts.  On configured systems this performs one status
+# request and closes immediately.  A failure exits sway so moonlight-session
+# can offer the retained console setup and maintenance fallback.
+if ! /usr/bin/selene setup; then
+	printf 'Graphical first-run failed; returning to the console fallback.\n' >&2
+	swaymsg exit >/dev/null 2>&1 || true
+	exit 1
+fi
+
+# The wizard may have changed the keyboard or display selection.
+mlos_load
+moonlight-region --apply-session
+moonlight-displays --apply
+
 # ...and keep doing it.  A laptop gets carried to a monitor and away again;
 # neither should need the menu.
 moonlight-hotplug >> "$MLOS_STATE/hotplug.log" 2>&1 &

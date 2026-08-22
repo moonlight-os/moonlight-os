@@ -57,6 +57,10 @@ mlos_load() {
 mlos_set() {
 	key="$1"
 	val="$2"
+	if [ "$(id -u)" != "0" ]; then
+		sudo -n /usr/local/sbin/moonlight-config-set "$key" "$val"
+		return
+	fi
 	tmp="$(mktemp)"
 	if [ -r "$MLOS_CONF" ]; then
 		grep -v "^${key}=" "$MLOS_CONF" > "$tmp" 2>/dev/null || true

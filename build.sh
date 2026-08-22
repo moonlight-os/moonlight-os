@@ -37,6 +37,9 @@ HOST_UTILS="${HOST_UTILS:-amd64}"
 GO_IMAGE="${GO_IMAGE:-golang:1.24-bookworm}"
 # Used when pkgs.tailscale.com cannot be reached to ask what stable is.
 TAILSCALE_FALLBACK=1.102.2
+MSQUIC_VERSION=2.5.9
+MSQUIC_SHA256=5f2107d3b682cc008ec248e93bc4c00dc4ac674f2e1d4bd5c830bf2d1f1b60a1
+MSQUIC_URL="https://packages.microsoft.com/debian/13/prod/pool/main/libm/libmsquic/libmsquic_${MSQUIC_VERSION}_amd64.deb"
 
 SELENE_SRC="${SELENE_SRC:-$HOME/moonlight-os-stuff/selene}"
 
@@ -87,6 +90,19 @@ fetch_selene() {
 
 	local dest="$HERE/config/packages.chroot"
 	mkdir -p "$dest"
+	local msquic_package="$dest/libmsquic_${MSQUIC_VERSION}_amd64.deb"
+	if [[ -f "$msquic_package" ]]; then
+		echo "$MSQUIC_SHA256  $msquic_package" | sha256sum -c - \
+			|| die "staged MsQuic package checksum mismatch: $msquic_package"
+	else
+		local msquic_download="$msquic_package.part.$$"
+		say "Downloading pinned MsQuic $MSQUIC_VERSION runtime"
+		curl -fL --retry 3 -o "$msquic_download" "$MSQUIC_URL" \
+			|| die "could not download $MSQUIC_URL"
+		echo "$MSQUIC_SHA256  $msquic_download" | sha256sum -c - \
+			|| die "downloaded MsQuic package checksum mismatch"
+		mv "$msquic_download" "$msquic_package"
+	fi
 
 	if [[ -z "${SELENE_REBUILD:-}" ]] && compgen -G "$dest/selene_*.deb" >/dev/null; then
 		say "Using the Selene package already staged in packages.chroot"

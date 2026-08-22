@@ -20,12 +20,13 @@ Installing needs no network and no setup first, so nothing that only the live
 session cares about is answered on the way to it — and if the machine already
 has Moonlight OS on it, the installer brings the old answers across anyway.
 
-**Ctrl+Alt+M opens the settings menu at any time**, on top of a running
+**Ctrl+Alt+M opens Selene's settings panel at any time**, on top of a running
 stream. Everything lives there: Wi-Fi, Tailscale, displays, USB passthrough,
-the installer. It works mid-stream too, where a window-manager binding
-cannot — see the design notes. (Ctrl+Alt+F12 is a fallback that only works
-outside a stream.) Quitting Moonlight also drops you into the same menu on
-the console.
+health and recovery, backups, and guarded entry points for the installer and
+persistence tools. It works mid-stream too, where an ordinary application
+shortcut cannot — see the design notes. (Ctrl+Alt+F12 is a fallback that only
+works outside a stream.) Quitting Selene still drops you into the console
+menu.
 
 With the Windows key sent to the host PC — the default — the running
 stream owns the whole keyboard, so leave it with **Ctrl+Alt+Shift+Q** if
@@ -183,12 +184,13 @@ short on purpose — start the stream, then six drawers:
 - **Displays** — one screen / mirror / extend, and per-screen resolution,
   rotation and position (see below)
 - **Sound** — volume, output device, stereo/surround, or play it on the PC instead
-- **Devices & input** — Bluetooth, USB passthrough (see below, including
-  automatic passthrough of everything you plug in), trackpad, keyboard & time
-  zone, low-battery warnings (see below)
+- **Devices & input** — Bluetooth, USB passthrough (see below, including a
+  recommended safe automatic policy and an explicit all-device policy),
+  trackpad, keyboard & time zone, low-battery warnings (see below)
 - **Network & internet** — Wi-Fi, Tailscale (see below), remote access over SSH
-- **System** — back up / restore settings, install to this computer, save
-  settings to this USB stick, command line
+- **System & maintenance** — live health and diagnostics, full report export,
+  video recovery, back up / restore settings, context-aware install or
+  persistence actions, command line, and power controls
 - **Reboot / shut down**
 
 Everything is stored in `/etc/moonlight-os/moonlight-os.conf`, which is a plain
@@ -217,8 +219,9 @@ ssh moonlight@moonlight-os.local moonlight-report > report.txt
 ```
 
 That is hardware, kernel DRM messages, the live output layout, VAAPI, Vulkan,
-and the compositor's and client's own session log. **Streaming → Video problems & logs
-→ Copy logs to a USB stick** writes the same thing.
+and the compositor's and client's own session log. **System & maintenance →
+Health & diagnostics → Save full report** writes the same thing to a mounted
+USB drive without leaving the stream.
 
 A live boot with no persistence makes new host keys every time, so your
 client will complain about a changed fingerprint on each boot. Installing to
@@ -252,53 +255,21 @@ run on the host PC, and this is where every other setup gets tedious: the
 command is different on Windows and Linux, Windows ships no USB/IP client at
 all, and somebody has to type it at the other end every time.
 
-So the host PC gets a small agent, `mlos-host-utils`, and after that
-Moonlight OS stops caring what that machine runs.
+Helios now owns the host half. USB device offers, attachment traffic and
+cleanup travel inside the authenticated streaming session, so there is no
+second agent to pair, no extra firewall port, and no device left attached to a
+different session.
 
 ### Set it up once
 
-If the host PC's package manager is one of these, that's the whole download:
+Install Helios normally. Its Windows installer includes the pinned, signed
+usbip-win2 client; Linux packages install a small privileged helper and depend
+on or recommend the distribution's `usbip` tools. Pair Selene with Helios as
+usual. That one pairing is the whole setup.
 
-```powershell
-winget install MopigamesYT.MlosHostUtils      # Windows
-```
-
-```sh
-paru -S mlos-host-utils                       # Arch, from the AUR
-nix run github:MopigamesYT/moonlight-os#mlos-host-utils -- pair   # Nix
-```
-
-then `mlos-host-utils install`, elevated. (On NixOS, don't — enable
-`services.mlos-host-utils` instead, from this flake or from the NUR as
-`nur.repos.mopigamesyt`; see [`packaging/nix`](packaging/nix).)
-
-Otherwise the ISO carries the agent. **Devices & input → USB passthrough →
-Download the agent on the host PC** serves it over the network for as long as
-the box is on screen; open the printed address on the host PC and grab the
-file for it. Then, over there:
-
-```powershell
-.\mlos-host-utils-windows-amd64.exe install   # Administrator PowerShell
-```
-
-Double-clicking that `.exe` works too — it opens a wizard that asks for
-administrator rights and leaves the pairing code on screen.
-
-```sh
-sudo ./mlos-host-utils-linux-amd64 install
-```
-
-That installs a USB/IP client if the machine hasn't got one — usbip-win2 on
-Windows, the distribution's `usbip` package on Linux — starts itself at boot,
-opens its port on private networks, and prints an address and a code:
-
-```
-  Address:  100.83.12.7  (tailnet)
-  Port:     48020
-  Code:     S95G-234X-0H8A-K602
-```
-
-Type those into **Pair the host PC** and that's the setup finished.
+Existing `mlos-host-utils` installations are disabled (not deleted) during a
+Helios upgrade. For one transition release, TCP 48020 remains a notice-only
+listener explaining that USB moved into authenticated Helios sessions.
 
 ### Then plug things in
 
@@ -336,16 +307,16 @@ you expected didn't appear.
 
 ### When something goes away
 
-Pulling the power on this machine mid-stream isn't a detach — the device would
-otherwise sit wedged on the host PC forever. The agent notices a Moonlight OS
-box that has stopped answering and lets go after about a minute; long enough
-that a Wi-Fi roam doesn't cost you the wheel mid-corner. In the other
-direction, a host PC that's switched off doesn't get to take your hardware
-hostage: nothing is exported until it answers, so the wheel keeps working here.
+An orderly stream end withdraws the complete device set before disconnecting.
+If the stream crashes or the network disappears, Helios tears down that
+session's attachments, and the appliance helper releases the devices acquired
+by Selene when its dedicated helper connection closes. A tiny runtime journal
+also recovers those devices if the helper itself restarts. Manual shares that
+predated the stream are never claimed or silently returned.
 
 ### Doing it by hand instead
 
-**Share one device by hand** needs no agent anywhere. It exports the device and
+**Share one device by hand** needs no separate agent. It exports the device and
 prints the `usbip attach` line for the host PC, which somebody then has to
 run — on Windows that means installing
 [usbip-win2](https://github.com/vadimgrn/usbip-win2) first, and using the full
@@ -366,11 +337,12 @@ so the command has to be retyped at the far end.
   from an Atom-based client recorded five seconds at 48 kHz over Wi-Fi with no
   dropped frames — but it is still the first thing to suspect if a stream
   starts crackling.
-- Port 3240 has to be reachable from the host PC, and 48020 the other way.
-  On a tailnet both are; the agent opens 48020 on private networks only.
+- USB/IP's port 3240 stays inside the session tunnel. TCP 48020 is no longer a
+  working data path and needs no firewall exception.
 
-`host-utils/README.md` documents the protocol, and `tools/test-usb-auto.py`
-covers the sharing rules.
+`host-utils/README.md` documents the retired prototype. `tools/test-usb-auto.py`
+covers the sharing policy, and `tools/test-helper-usb-session.py` covers native
+session ownership, overlap, disconnect and restart recovery.
 
 ## The Ctrl+Alt+M hotkey
 
@@ -665,10 +637,13 @@ Some of these are non-obvious, and a couple were found the hard way:
   key position, so the key labelled M works on AZERTY, where it would
   otherwise be the semicolon. The evdev version needed two rules for this.
 
-- **The panel holds a lock directory, and does not `exec` the terminal.**
-  Replacing the shell with the terminal would drop the `EXIT` trap, so the
-  lock outlived the panel and Ctrl+Alt+M worked exactly once per boot. A lock
-  with no matching window is now treated as stale rather than fatal.
+- **The guarded terminal-workflow launcher holds a lock directory.** The
+  everyday settings UI is Selene's native panel, but install, persistence,
+  SSH password setup, and the command line temporarily open the existing
+  terminal tools in their own workspace. That wrapper must not `exec` the
+  terminal: doing so would drop the `EXIT` trap, leave the lock behind, and
+  make the next guarded workflow fail to open. A lock with no matching window
+  is treated as stale rather than fatal.
 
 - **sway's `exec` does not own the process it starts.** `startx` tore the X
   server down when its client exited; sway does not, so the session script
@@ -852,7 +827,9 @@ The scripts are POSIX `sh` and readable in one sitting:
 | `moonlight-session`   | boot flow: welcome → region → network → X → menu  |
 | `moonlight-welcome`   | live boot's first question: install, or try it?   |
 | `moonlight-wlsession` | the session sway runs: layout, keymap, then Selene |
-| `moonlight-panel`     | Ctrl+Alt+M: the menu in a terminal over the stream|
+| `moonlight-panel`     | guarded terminal launcher for install, persistence, SSH and shell |
+| `moonlight-hotkey`    | hands Ctrl+Alt+M between Sway and the in-stream Selene panel      |
+| `moonlight-helper`    | narrow privileged API used by Selene's native panel           |
 | `moonlight-netsetup`  | Wi-Fi wizard                                      |
 | `moonlight-tailscale` | tailnet login and peer list                       |
 | `moonlight-ssh`       | remote access: address, fingerprints, password    |

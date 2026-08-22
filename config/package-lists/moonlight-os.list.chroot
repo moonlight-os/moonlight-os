@@ -208,6 +208,10 @@ parted
 gdisk
 dosfstools
 rsync
+# Session-owned, loopback-only read-only export of the running system disk.
+dmsetup
+targetcli-fb
+python3-rtslib-fb
 # grub-*-bin only: the -bin packages carry the platform modules and
 # grub-install without the postinst that tries to write to an ESP at
 # build time (there isn't one inside a live-build chroot).
