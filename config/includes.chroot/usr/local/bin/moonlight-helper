@@ -370,15 +370,42 @@ def op_status(args, emit):
                 break
 
     wifi = None
+    ethernet = None
     out, _ = run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"], timeout=5)
     if out:
         for line in out.splitlines():
-            name, _, kind = line.partition(":")
-            if "wireless" in kind:
+            # Connection names may contain escaped colons, so the type is the
+            # final unescaped field rather than everything after the first one.
+            fields = re.split(r"(?<!\\):", line)
+            if len(fields) < 2:
+                continue
+            name = ":".join(fields[:-1]).replace("\\:", ":")
+            kind = fields[-1]
+            if kind == "802-11-wireless" and wifi is None:
                 wifi = name
-                break
+            elif kind == "802-3-ethernet" and ethernet is None:
+                ethernet = name
 
-    return {"hostname": hostname, "address": ip, "wifi": wifi}
+    if ethernet:
+        connection_type = "ethernet"
+        connection_name = ethernet
+    elif wifi:
+        connection_type = "wifi"
+        connection_name = wifi
+    elif ip:
+        connection_type = "other"
+        connection_name = ""
+    else:
+        connection_type = "none"
+        connection_name = ""
+
+    return {
+        "hostname": hostname,
+        "address": ip,
+        "wifi": wifi,
+        "connection_type": connection_type,
+        "connection_name": connection_name,
+    }
 
 
 def op_wifi_list(args, emit):

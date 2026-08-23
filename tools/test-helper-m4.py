@@ -28,6 +28,50 @@ def load_helper():
 helper = load_helper()
 
 
+class NetworkStatusTest(unittest.TestCase):
+    def status(self, active_connections, address="192.0.2.10"):
+        def fake_run(argv, timeout=30, input_text=None):
+            del timeout, input_text
+            if argv == ["hostname"]:
+                return "moonlight-os\n", None
+            if argv[:4] == ["ip", "-4", "-o", "addr"]:
+                if not address:
+                    return "", None
+                return "2: enp1s0    inet %s/24 scope global enp1s0\n" % address, None
+            if argv[:3] == ["nmcli", "-t", "-f"]:
+                return active_connections, None
+            raise AssertionError("unexpected command: %r" % argv)
+
+        with mock.patch.object(helper, "run", fake_run):
+            return helper.op_status({}, lambda message: None)
+
+    def test_active_ethernet_is_reported_explicitly(self):
+        result = self.status("Wired connection 1:802-3-ethernet\n")
+
+        self.assertEqual(result["connection_type"], "ethernet")
+        self.assertEqual(result["connection_name"], "Wired connection 1")
+        self.assertIsNone(result["wifi"])
+
+    def test_ethernet_wins_when_wired_and_wifi_are_both_active(self):
+        result = self.status(
+            "Cafe\\: upstairs:802-11-wireless\n"
+            "Dock Ethernet:802-3-ethernet\n"
+        )
+
+        self.assertEqual(result["connection_type"], "ethernet")
+        self.assertEqual(result["connection_name"], "Dock Ethernet")
+        self.assertEqual(result["wifi"], "Cafe: upstairs")
+
+    def test_wifi_and_offline_states_remain_distinct(self):
+        wifi = self.status("Home:802-11-wireless\n")
+        offline = self.status("", address="")
+
+        self.assertEqual((wifi["connection_type"], wifi["connection_name"]),
+                         ("wifi", "Home"))
+        self.assertEqual((offline["connection_type"], offline["connection_name"]),
+                         ("none", ""))
+
+
 class UsbSharedStateTest(unittest.TestCase):
     def test_attached_export_remains_shared_after_usbipd_hides_it(self):
         mh = helper.usb_module()
