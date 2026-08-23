@@ -54,15 +54,9 @@ util-linux
 pciutils
 usbutils
 systemd-timesyncd
-# Everything here is POSIX sh except the USB passthrough client, which speaks
-# line-delimited JSON over TCP to the host PC -- doing that in sh means nc
-# plus a JSON parser written in sed, and the failure mode of that is a wheel
-# that silently stops working.  Python was already in the image as somebody
-# else's dependency; this makes it deliberate, so a future slimming pass does
-# not quietly take moonlight-hostagent with it.  Standard library only --
-# but the full python3, not python3-minimal: json lives in the stdlib package
-# and minimal does not carry it.  This costs nothing, python3 was already
-# being pulled in.
+# The privileged settings helper and USB device policy are Python. Keep the
+# full interpreter explicit so an image-slimming pass cannot silently remove
+# their standard-library JSON and socket support.
 python3
 
 ## ---- remote access ---------------------------------------------------

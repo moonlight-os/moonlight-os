@@ -1176,10 +1176,11 @@ def usb_state(mh):
 
     return {
         "devices": devices,
-        # Paired means the host PC runs the agent and picks devices up on its
-        # own. Without it sharing still works, but somebody types a usbip
-        # command over there, which the panel cannot do for them.
+        # Retained for an older Selene during the transition. New clients use
+        # native_transport: Helios receives the exported set through the
+        # authenticated streaming session, with no separately paired agent.
         "paired": bool(addr and token),
+        "native_transport": True,
         "autoshare": values["USB_AUTOSHARE"] == "yes",
         "autoshare_policy": values["USB_AUTOSHARE_POLICY"]
             if values["USB_AUTOSHARE_POLICY"] in ("safe", "all") else "safe",
@@ -1518,17 +1519,7 @@ def op_usb_share(args, emit):
         raise Error(E_FAILED, "%s did not come up as shared" % device.label)
 
     result = usb_state(mh)
-    if result["paired"]:
-        emit("Telling the host PC...")
-        try:
-            with mh.client_from_conf() as client:
-                client.sync(mh.offered())
-        except Exception as err:  # noqa: BLE001 - the sharing worked regardless
-            # Exported here but not picked up there is a real, recoverable
-            # state, and it is not the same failure as not sharing at all.
-            result["message"] = "Shared, but the host PC did not answer: %s" % err
-    else:
-        result["message"] = "Shared. The host PC is not paired, so attach it there by hand."
+    result["message"] = "Shared. Helios will attach it during the streaming session."
 
     return result
 
@@ -1542,32 +1533,13 @@ def op_usb_unshare(args, emit):
     if busid in mh.bound_busids():
         raise Error(E_FAILED, "that device is still shared")
 
-    result = usb_state(mh)
-    if result["paired"]:
-        try:
-            with mh.client_from_conf() as client:
-                client.sync(mh.offered())
-        except Exception as err:  # noqa: BLE001
-            log("could not tell the host PC about the unshare: %r" % err)
-
-    return result
+    return usb_state(mh)
 
 
 def op_usb_handback(args, emit):
-    """Take everything back from the host PC at once."""
+    """Withdraw every local export from the native streaming session."""
     mh = usb_module()
-
-    addr, _, token = mh.host_settings()
-    if not (addr and token):
-        raise Error(E_UNAVAILABLE, "no host PC is paired")
-
-    emit("Asking the host PC to let go...")
-    try:
-        with mh.client_from_conf() as client:
-            client.detach_all()
-    except Exception as err:  # noqa: BLE001
-        raise Error(E_FAILED, "the host PC did not answer: %s" % err)
-
+    emit("Withdrawing USB devices from the stream...")
     for busid in list(mh.bound_busids()):
         mh.unbind(busid)
 
@@ -1587,9 +1559,9 @@ def op_usb_autoshare(args, emit):
         "USB_AUTOSHARE": "yes" if enabled else "no",
         "USB_AUTOSHARE_POLICY": policy,
     })
-    out, err = run(["systemctl", "restart", "moonlight-usb-auto.service"], timeout=30)
-    if out is None:
-        raise Error(E_FAILED, err)
+    # The active Selene session polls usb.session.sync and applies this policy
+    # itself. Restarting the retired TCP-agent watcher here races that lease
+    # and can bind or release the same device behind Selene's back.
     return usb_state(usb_module())
 
 
