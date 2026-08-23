@@ -40,7 +40,7 @@ GO_IMAGE="${GO_IMAGE:-golang:1.24-bookworm}"
 # Used when pkgs.tailscale.com cannot be reached to ask what stable is.
 TAILSCALE_FALLBACK=1.102.2
 MSQUIC_VERSION=2.5.9
-MSQUIC_SHA256=5f2107d3b682cc008ec248e93bc4c00dc4ac674f2e1d4bd5c830bf2d1f1b60a1
+MSQUIC_SHA256=1baa61ade0b7b4a99f6dcb6b00d9aedb12b5566d00918a325be7425e878e51ba
 MSQUIC_URL="https://packages.microsoft.com/debian/13/prod/pool/main/libm/libmsquic/libmsquic_${MSQUIC_VERSION}_amd64.deb"
 
 SELENE_SRC="${SELENE_SRC:-$HOME/moonlight-os-stuff/selene}"
