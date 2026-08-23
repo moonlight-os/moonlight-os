@@ -14,8 +14,8 @@ on:
         description: 'Installed OS version (tag builds use the tag)'
         default: '0~dev'
       selene_ref:
-        description: 'Selene ref to build the client from'
-        default: 'main'
+        description: 'Compatible Selene ref (must provide setup and panel actions)'
+        default: 'd37b54a6e3a06efea5a57d6cc334195bf242608a'
       firmware:
         description: 'full keeps every blob, slim drops ~400 MB'
         type: choice
@@ -88,7 +88,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: moonlight-os/selene
-          ref: ${{ inputs.selene_ref || 'main' }}
+          # Pin the compatible appliance client. Selene main does not yet
+          # provide the setup/panel commands the session calls at boot.
+          ref: ${{ inputs.selene_ref || 'd37b54a6e3a06efea5a57d6cc334195bf242608a' }}
           submodules: recursive
           path: selene
 

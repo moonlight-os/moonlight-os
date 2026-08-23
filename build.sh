@@ -50,6 +50,7 @@ die() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
 command -v docker >/dev/null || die "docker is required to build the image."
 docker info >/dev/null 2>&1 || die "cannot talk to the docker daemon."
+command -v dpkg-deb >/dev/null || die "dpkg-deb is required to verify the Selene package."
 
 # ---------------------------------------------------------------- builder ---
 build_builder_image() {
@@ -76,6 +77,23 @@ build_builder_image() {
 # FFmpeg and VA-API rather than carrying a second copy of all of them, and it
 # is why the LIBVA_DRIVERS_PATH override and the "pkill -x AppRun" fallback are
 # both gone from the launcher scripts.
+verify_selene_package() {
+	local package="$1"
+	local setup_help='  setup           Run Moonlight OS first-run setup'
+	local panel_help='  panel           Open the Moonlight OS control centre'
+	local matches
+
+	matches="$(dpkg-deb --fsys-tarfile "$package" \
+		| tar -xOf - ./usr/bin/selene 2>/dev/null \
+		| { grep -aFo -e "$setup_help" -e "$panel_help"; grep_status=$?; [ "$grep_status" -le 1 ]; } \
+		| sort -u)" \
+		|| die "could not inspect the Selene binary in $package"
+	if ! grep -Fx "$setup_help" <<< "$matches" >/dev/null \
+		|| ! grep -Fx "$panel_help" <<< "$matches" >/dev/null; then
+		die "Selene package lacks the setup/panel interface required by Moonlight OS: $package"
+	fi
+}
+
 fetch_selene() {
 	[[ -d "$SELENE_SRC" ]] \
 		|| die "Selene source not found at $SELENE_SRC. Set SELENE_SRC to the checkout."
@@ -107,6 +125,9 @@ fetch_selene() {
 	fi
 
 	if [[ -z "${SELENE_REBUILD:-}" ]] && compgen -G "$dest/selene_*.deb" >/dev/null; then
+		local staged_package
+		staged_package="$(compgen -G "$dest/selene_*.deb" | head -1)"
+		verify_selene_package "$staged_package"
 		say "Using the Selene package already staged in packages.chroot"
 		return
 	fi
@@ -120,7 +141,10 @@ fetch_selene() {
 	rm -f "$dest"/selene_*.deb
 	cp "$SELENE_SRC"/dist/selene_*.deb "$dest/" \
 		|| die "no Selene .deb was produced"
-	say "Staged $(basename "$(ls -1 "$dest"/selene_*.deb | head -1)")"
+	local staged_package
+	staged_package="$(compgen -G "$dest/selene_*.deb" | head -1)"
+	verify_selene_package "$staged_package"
+	say "Staged $(basename "$staged_package")"
 }
 
 # ------------------------------------------------------------- tailscale ----
