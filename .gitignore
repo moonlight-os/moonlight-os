@@ -44,6 +44,8 @@
 
 # SSH public keys of whoever ran the build -- never commit these.
 /config/includes.chroot/etc/moonlight-os/authorized_keys
+# Generated for each image so the installed updater can compare releases.
+/config/includes.chroot/etc/moonlight-os/release
 
 # --- host utils ---------------------------------------------------------
 /host-utils/dist/

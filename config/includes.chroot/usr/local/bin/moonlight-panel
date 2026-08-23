@@ -175,6 +175,7 @@ trap restore EXIT INT TERM HUP
 case "${MLOS_PANEL_COMMAND:-menu}" in
 	install) set -- sudo -n /usr/local/bin/moonlight-install ;;
 	persist) set -- sudo -n /usr/local/bin/moonlight-persist ;;
+	update)  set -- sudo -n /usr/local/sbin/moonlight-update --menu ;;
 	ssh)     set -- sudo -n /usr/local/bin/moonlight-ssh ;;
 	shell)   set -- /bin/bash -l ;;
 	*)       set -- /usr/local/bin/moonlight-menu --in-session ;;

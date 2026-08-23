@@ -48,6 +48,7 @@ Options:
 | Variable            | Default  | Effect                                          |
 | ------------------- | -------- | ----------------------------------------------- |
 | `ISO_VERSION`       | `6.1.0`  | Version label stamped into the ISO filename     |
+| `MLOS_VERSION`      | `0~dev`  | Installed OS version used by the updater         |
 | `SELENE_SRC`        | `~/moonlight-os-stuff/selene` | Selene checkout to build the client from |
 | `FIRMWARE`          | `full`   | `slim` drops ~400 MB of firmware blobs          |
 | `TAILSCALE_VERSION` | latest   | Pin Tailscale instead of taking current stable  |
@@ -158,9 +159,11 @@ hardware with an Intel or AMD GPU.
 Live USB is fine forever, but if you want it on the machine's own drive, the
 welcome screen offers it as the first thing a live boot asks — nothing else
 has to be answered to get there. Later on it is Ctrl+Alt+M → **System** →
-**Install to this computer**. Either way it wipes the chosen disk, copies the
-system over, and installs GRUB for both UEFI and BIOS. The USB stick you booted
-from is excluded from the disk list so you can't overwrite it mid-install.
+**Install to this computer**. Either way it wipes the chosen disk, creates two
+system slots around a shared boot partition, copies the system into slot A,
+and installs GRUB for both UEFI and BIOS. A disk of at least 20 GB is required.
+The USB stick you booted from is excluded from the disk list so you can't
+overwrite it mid-install.
 
 Confirming the erase means typing a word, which needs the right keys, so the
 welcome screen has a keyboard-layout entry alongside the other two. Everything
@@ -172,6 +175,32 @@ this USB stick** instead — that adds a persistence partition in the stick's
 free space so your
 pairing, Wi-Fi passwords and display setup survive reboots. Without either
 step, a live boot forgets everything on shutdown.
+
+## Built-in OS updates
+
+On an installed system, quit Selene to open the console menu, then choose
+**System** → **Update Moonlight OS**. The same guarded updater workflow is
+also exposed to Selene's native control-centre API.
+The updater downloads the latest release ISO and a small Ed25519-signed
+manifest. It verifies the manifest, download size, and SHA-256 hash before it
+changes a partition; a bad or missing signature stops the update.
+
+The running system is never rewritten. The new image goes into the inactive
+root slot, the machine settings are merged into it, and GRUB tries that slot
+once. A system that remains up for 90 seconds marks the new slot as the
+default. If it cannot boot that far, GRUB's one-shot choice has already been
+consumed, so the following boot automatically returns to the old system.
+
+Installations made by images before the A/B layout have one `moonlight-root`
+partition and cannot gain safe rollback in place. They need one reinstall from
+a current USB image; the installer's settings hand-off preserves pairing,
+network, Bluetooth, Tailscale, SSH identity, and the machine ID. Updates after
+that happen from the built-in menu.
+
+Tag releases produce `moonlight-os-update.txt` and its signature alongside the
+ISO. The repository secret `MLOS_UPDATE_SIGNING_KEY` holds the private Ed25519
+key; the matching public key is pinned in the image. Changing that key is a
+trust-root rotation and must be shipped in an already trusted image first.
 
 ## The menus
 
@@ -526,13 +555,14 @@ never gets mistaken for the machine's own.
 
 ## Reinstalling without losing everything
 
-A new ISO means reinstalling, and reinstalling wipes the disk. The installer
-handles that itself: before it erases anything it looks for an existing
-Moonlight OS, offers to carry its settings over, and puts them back into the
-fresh system afterwards. It looks on every disk, not just the one being
-erased — moving from an old drive to a new NVMe is exactly the case where
-losing everything hurts most, and there the old system is sitting somewhere
-the installer was never going to touch. Failing that, a
+Reinstalling still wipes the disk, even though ordinary releases now use the
+built-in updater. The installer handles the hand-off itself: before it erases
+anything it looks for an existing Moonlight OS, offers to carry its settings
+over, and puts them back into the fresh system afterwards. It looks on every
+disk, not just the one being erased — moving from an old drive to a new NVMe
+is exactly the case where losing everything hurts most, and there the old
+system is sitting somewhere the installer was never going to touch. Failing
+that, a
 `moonlight-os-settings-*.tar.gz` on any plugged-in medium is offered instead.
 
 Before the disk goes, and again when it is done, it says what it found:
@@ -846,6 +876,7 @@ The scripts are POSIX `sh` and readable in one sitting:
 | `moonlight-touch`     | points the touchscreen the same way as the screen |
 | `moonlight-hostagent` | speaks to mlos-host-utils on the host PC|
 | `moonlight-install`   | install to internal disk                          |
+| `moonlight-update`    | signed A/B OS updates and boot confirmation       |
 | `moonlight-persist`   | persistence partition on the boot USB             |
 | `moonlight-menu`      | the menu shown when Moonlight exits               |
 

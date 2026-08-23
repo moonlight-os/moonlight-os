@@ -215,6 +215,19 @@ class InstallInventoryTest(unittest.TestCase):
                 )
         self.assertEqual(raised.exception.code, helper.E_BAD_REQUEST)
 
+    def test_update_launch_is_allowlisted_for_installed_systems(self):
+        context = {"terminal_available": True, "install_available": False,
+                   "persistence_available": False, "persistence": False,
+                   "update_available": True}
+        with mock.patch.object(helper, "op_system_context", return_value=context), \
+             mock.patch.object(helper.threading, "Thread") as thread:
+            result = helper.op_system_launch(
+                {"workflow": "update"}, lambda message: None,
+            )
+
+        self.assertEqual(result, {"launched": "update"})
+        self.assertEqual(thread.call_args.kwargs["args"], ("update", {}))
+
 
 class ClientProtocolTest(unittest.TestCase):
     def test_oversized_request_is_rejected_and_connection_closed(self):

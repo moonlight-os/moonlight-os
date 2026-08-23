@@ -10,6 +10,9 @@ on:
       iso_version:
         description: 'Version label stamped into the ISO filename'
         default: '6.1.0'
+      os_version:
+        description: 'Installed OS version (tag builds use the tag)'
+        default: '0~dev'
       selene_ref:
         description: 'Selene ref to build the client from'
         default: 'main'
@@ -92,6 +95,7 @@ jobs:
       - name: Build the ISO
         env:
           ISO_VERSION: ${{ inputs.iso_version || '6.1.0' }}
+          MLOS_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.os_version || '0~dev' }}
           FIRMWARE: ${{ inputs.firmware || 'full' }}
           HOST_UTILS: ${{ inputs.host_utils || 'amd64' }}
           SSH_KEYS: ${{ steps.ssh.outputs.arg }}
@@ -110,6 +114,29 @@ jobs:
           ls -lh out
           cat out/SHA256SUMS
 
+      - name: Sign updater metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SIGNING_KEY: ${{ secrets.MLOS_UPDATE_SIGNING_KEY }}
+        run: |
+          [ -n "$SIGNING_KEY" ] || { echo "MLOS_UPDATE_SIGNING_KEY is not configured"; exit 1; }
+          iso="${{ steps.iso.outputs.path }}"
+          version="${GITHUB_REF_NAME#v}"
+          sha256="$(sha256sum "$iso" | awk '{ print $1 }')"
+          size="$(wc -c < "$iso" | tr -d '[:space:]')"
+          printf 'format=1\nversion=%s\niso=%s\nsha256=%s\nsize=%s\n' \
+            "$version" "$(basename "$iso")" "$sha256" "$size" \
+            > out/moonlight-os-update.txt
+          key="$RUNNER_TEMP/moonlight-os-update.pem"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          chmod 0600 "$key"
+          openssl pkeyutl -sign -rawin -inkey "$key" \
+            -in out/moonlight-os-update.txt \
+            -out out/moonlight-os-update.txt.sig
+          openssl pkey -in "$key" -pubout -out "$RUNNER_TEMP/update.pub"
+          cmp "$RUNNER_TEMP/update.pub" \
+            config/includes.chroot/usr/share/moonlight-os/update.pub
+
       # An ISO is already compressed; re-compressing it wastes several
       # minutes for nothing.
       - name: Upload the ISO
@@ -119,6 +146,8 @@ jobs:
           path: |
             out/*.iso
             out/SHA256SUMS
+            out/moonlight-os-update.txt
+            out/moonlight-os-update.txt.sig
           compression-level: 0
           retention-days: 14
           if-no-files-found: error
@@ -171,4 +200,5 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --generate-notes --title "$tag"
           gh release upload "$tag" \
-            "${{ steps.iso.outputs.path }}" out/SHA256SUMS --clobber
+            "${{ steps.iso.outputs.path }}" out/SHA256SUMS \
+            out/moonlight-os-update.txt out/moonlight-os-update.txt.sig --clobber

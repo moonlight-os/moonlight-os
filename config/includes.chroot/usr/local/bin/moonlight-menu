@@ -213,6 +213,8 @@ system_menu() {
 		if is_live; then
 			entries="$entries install $(sq 'Install to this computer')"
 			entries="$entries persist $(sq 'Save settings to this USB stick')"
+		else
+			entries="$entries update $(sq 'Update Moonlight OS')"
 		fi
 		entries="$entries shell $(sq 'Command line')"
 		entries="$entries back $(sq 'Back')"
@@ -226,6 +228,7 @@ which is a plain shell file you can also edit by hand.')" \
 			backup)  sudo -n /usr/local/bin/moonlight-backup --menu ;;
 			install) sudo -n /usr/local/bin/moonlight-install ;;
 			persist) sudo -n /usr/local/bin/moonlight-persist ;;
+			update)  sudo -n /usr/local/sbin/moonlight-update --menu ;;
 			shell)   clear
 			         command -v fastfetch >/dev/null 2>&1 && fastfetch
 			         printf '\nType "exit" to return to the Moonlight menu.\n\n'

@@ -208,6 +208,10 @@ parted
 gdisk
 dosfstools
 rsync
+# The installed OS updater downloads a signed ISO and mounts its SquashFS.
+curl
+openssl
+squashfs-tools
 # Session-owned, loopback-only read-only export of the running system disk.
 dmsetup
 targetcli-fb

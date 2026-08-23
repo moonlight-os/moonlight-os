@@ -19,6 +19,7 @@
 #   MLOS_SUITE=trixie          Debian release to base on
 #   HOST_UTILS=amd64|all|none  which mlos-host-utils builds to carry
 #                              on the ISO for copying to the host PC
+#   MLOS_VERSION=0.2.0         OS release version written into the image
 #   INCREMENTAL=1              reuse the existing chroot (fast, but silently
 #                              ignores any config change -- debugging only)
 
@@ -29,6 +30,7 @@ IMAGE=moonlight-os-builder
 # Stamped into the ISO filename. It used to select which Moonlight AppImage to
 # download; the client is now built from source, so it is only a label.
 ISO_VERSION="${ISO_VERSION:-6.1.0}"
+MLOS_VERSION="${MLOS_VERSION:-0~dev}"
 FIRMWARE="${FIRMWARE:-full}"
 MLOS_SUITE="${MLOS_SUITE:-trixie}"
 TAILSCALE_VERSION="${TAILSCALE_VERSION:-}"
@@ -269,6 +271,22 @@ stage_ssh_keys() {
 	done < <(ssh-keygen -lf "$dest" 2>/dev/null || true)
 }
 
+# ---------------------------------------------------------- release stamp ----
+# This file is generated rather than tracked: tag builds and local development
+# images must never claim to be the same installed release.
+stage_release() {
+	local version="${MLOS_VERSION#v}"
+	[[ "$version" =~ ^[0-9][0-9A-Za-z.+:~_-]*$ ]] \
+		|| die "MLOS_VERSION contains unsupported characters: $MLOS_VERSION"
+	local dest="$HERE/config/includes.chroot/etc/moonlight-os/release"
+	local revision
+	revision="$(git -C "$HERE" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"
+	mkdir -p "$(dirname "$dest")"
+	printf 'FORMAT=2\nVERSION=%s\nBUILD_ID=%s\nREVISION=%s\n' \
+		"$version" "$(date -u +%Y%m%dT%H%M%SZ)" "$revision" > "$dest"
+	say "Moonlight OS release: $version ($revision)"
+}
+
 # ----------------------------------------------------------------- build ----
 do_build() {
 	build_builder_image
@@ -276,6 +294,7 @@ do_build() {
 	fetch_tailscale
 	build_host_utils
 	stage_ssh_keys
+	stage_release
 
 	local pkglist="config/package-lists/moonlight-os.list.chroot"
 	if [[ "$FIRMWARE" == "slim" ]]; then
@@ -339,6 +358,7 @@ do_clean() {
 		"$IMAGE" bash -uc 'lb clean --purge || true
 			chown -R "$HOST_UID:$HOST_GID" /build 2>/dev/null || true' || true
 	rm -rf "$HERE/config/includes.chroot/etc/moonlight-os/authorized_keys" \
+	       "$HERE/config/includes.chroot/etc/moonlight-os/release" \
 	       "$HERE/config/includes.chroot/usr/bin/tailscale" \
 	       "$HERE/config/includes.chroot/usr/bin/.tailscale-version" \
 	       "$HERE/config/includes.chroot/usr/sbin/tailscaled" \

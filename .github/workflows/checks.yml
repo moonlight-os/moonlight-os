@@ -21,6 +21,7 @@ jobs:
           for test in tools/test-helper-*.py; do
             python3 "$test"
           done
+          python3 tools/test-updater-contract.py
       - name: Python syntax
         run: |
           python3 -m py_compile \
@@ -30,10 +31,16 @@ jobs:
         run: |
           shellcheck -S error \
             config/includes.chroot/usr/local/bin/moonlight-common \
+            config/includes.chroot/usr/local/bin/moonlight-backup \
             config/includes.chroot/usr/local/bin/moonlight-install \
             config/includes.chroot/usr/local/bin/moonlight-menu \
             config/includes.chroot/usr/local/bin/moonlight-panel \
             config/includes.chroot/usr/local/bin/moonlight-session \
-            config/includes.chroot/usr/local/bin/moonlight-welcome
+            config/includes.chroot/usr/local/bin/moonlight-welcome \
+            config/includes.chroot/usr/local/sbin/moonlight-update \
+            config/includes.chroot/etc/grub.d/09_moonlight_slots \
+            config/hooks/normal/0050-moonlight-updater.hook.chroot
       - name: Sudo policy has no unrestricted rule
-        run: '! grep -Eq "NOPASSWD:[[:space:]]*(ALL|/bin/(ba)?sh)" config/includes.chroot/etc/sudoers.d/moonlight'
+        run: |
+          ! grep -Eq "NOPASSWD:[[:space:]]*(ALL|/bin/(ba)?sh)" config/includes.chroot/etc/sudoers.d/moonlight
+          sudo visudo -cf config/includes.chroot/etc/sudoers.d/moonlight

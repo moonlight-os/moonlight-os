@@ -85,7 +85,7 @@ REGION_LOCK = threading.Lock()
 BACKUP_LOCK = threading.Lock()
 USB_SESSION_LOCK = threading.Lock()
 DISK_SESSION_LOCK = threading.Lock()
-INSTALL_MIN_BYTES = 6_000_000_000
+INSTALL_MIN_BYTES = 20_000_000_000
 FIRST_RUN_FLAG = "/etc/moonlight-os/.configured"
 WELCOME_FLAG = "/run/moonlight-os/welcome-done"
 # Bus IDs acquired by native Selene sessions, with a reference count for the
@@ -1721,6 +1721,7 @@ def op_system_context(args, emit):
         "persistence": os.path.exists("/dev/disk/by-label/persistence"),
         "install_available": live and os.path.isfile("/usr/local/bin/moonlight-install"),
         "persistence_available": live and os.path.isfile("/usr/local/bin/moonlight-persist"),
+        "update_available": not live and os.path.isfile("/usr/local/sbin/moonlight-update"),
         "terminal_available": shutil.which("foot") is not None,
     }
 
@@ -1881,7 +1882,7 @@ def launch_system_workflow(workflow, workflow_env=None):
 
 def op_system_launch(args, emit):
     workflow = args.get("workflow")
-    if workflow not in ("install", "persist", "ssh", "shell"):
+    if workflow not in ("install", "persist", "update", "ssh", "shell"):
         raise Error(E_BAD_REQUEST, "unknown system workflow")
     context = op_system_context({}, emit)
     if not context["terminal_available"]:
@@ -1893,6 +1894,8 @@ def op_system_launch(args, emit):
             raise Error(E_BAD_REQUEST, "USB persistence is available only from a live USB")
         if context["persistence"]:
             raise Error(E_BAD_REQUEST, "persistence is already configured")
+    if workflow == "update" and not context["update_available"]:
+        raise Error(E_BAD_REQUEST, "updates are available only on an installed Moonlight OS system")
     if workflow == "ssh" and not os.path.isfile("/usr/local/bin/moonlight-ssh"):
         raise Error(E_UNAVAILABLE, "the SSH setup workflow is not installed")
 

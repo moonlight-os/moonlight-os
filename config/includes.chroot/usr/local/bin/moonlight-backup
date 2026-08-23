@@ -38,6 +38,7 @@ PATHS="
 /etc/adjtime
 /etc/hostname
 /etc/hosts
+/etc/machine-id
 /var/lib/tailscale
 /var/lib/bluetooth
 /home/moonlight/.ssh/authorized_keys
