@@ -46,6 +46,7 @@
 /config/includes.chroot/etc/moonlight-os/authorized_keys
 # Generated for each image so the installed updater can compare releases.
 /config/includes.chroot/etc/moonlight-os/release
+/config/includes.chroot/usr/share/moonlight-os/release
 
 # --- host utils ---------------------------------------------------------
 /host-utils/dist/

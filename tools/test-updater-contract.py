@@ -18,6 +18,9 @@ updater_path = ROOT / "config/includes.chroot/usr/local/sbin/moonlight-update"
 updater = updater_path.read_text(encoding="utf-8")
 grub_path = ROOT / "config/includes.chroot/etc/grub.d/09_moonlight_slots"
 grub = grub_path.read_text(encoding="utf-8")
+backup = text("config/includes.chroot/usr/local/bin/moonlight-backup")
+slot_sync_path = ROOT / "config/includes.chroot/usr/local/sbin/moonlight-slot-sync"
+slot_sync = slot_sync_path.read_text(encoding="utf-8")
 workflow = text(".github/workflows/iso.yml")
 timer = text(
     "config/includes.chroot/etc/systemd/system/moonlight-update-confirm.timer"
@@ -29,6 +32,8 @@ for label in ("moonlight-boot", "moonlight-root-a", "moonlight-root-b"):
 
 assert "GRUB_DEFAULT=saved" in text("config/includes.chroot/etc/default/grub")
 assert "--id 'moonlight-$slot'" in grub
+assert "uuid_for_label moonlight-root-a" in grub
+assert "uuid_for_label moonlight-root-b" in grub
 assert "grub-reboot \"moonlight-$INACTIVE_SLOT\"" in updater
 assert "grub-set-default \"moonlight-$CURRENT_SLOT\"" in updater
 assert "OnBootSec=90s" in timer
@@ -39,6 +44,18 @@ download_at = updater.index('curl --proto', parse_at)
 format_at = updater.index("mkfs.ext4")
 assert verify_at < parse_at < download_at < format_at
 
+restore_at = updater.index('moonlight-backup --restore-to')
+rewrite_at = updater.index("write_slot_files", restore_at)
+assert restore_at < rewrite_at
+assert "/etc/moonlight-os\n" not in backup
+assert "/etc/moonlight-os/moonlight-os.conf" in backup
+assert "/etc/moonlight-os/.configured" in backup
+assert "/usr/share/moonlight-os/release" in slot_sync
+assert "/usr/share/moonlight-os/release" in text("build.sh")
+assert "moonlight-slot-sync.service" in text(
+    "config/hooks/normal/0050-moonlight-updater.hook.chroot"
+)
+
 for asset in ("moonlight-os-update.txt", "moonlight-os-update.txt.sig"):
     assert asset in workflow
 assert "moonlight-os-update.txt" in updater
@@ -47,6 +64,7 @@ assert "SIGNATURE_URL=${MANIFEST_URL}.sig" in updater
 assert "MLOS_UPDATE_SIGNING_KEY" in workflow
 assert os.stat(updater_path).st_mode & 0o111
 assert os.stat(grub_path).st_mode & 0o111
+assert os.stat(slot_sync_path).st_mode & 0o111
 
 public_key = ROOT / "config/includes.chroot/usr/share/moonlight-os/update.pub"
 subprocess.run(

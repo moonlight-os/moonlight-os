@@ -216,6 +216,10 @@ write_slot_files() {
 	MLOS_ESP_UUID=$esp_uuid
 	EOF
 	printf '%s\n' "$INACTIVE_SLOT" > "$TARGET/etc/moonlight-os/slot"
+	if [ -r "$TARGET/usr/share/moonlight-os/release" ]; then
+		cp "$TARGET/usr/share/moonlight-os/release" \
+			"$TARGET/etc/moonlight-os/release"
+	fi
 }
 
 bind_target() {
@@ -274,9 +278,13 @@ prepare_target() {
 		|| die "Copying the new system into the inactive slot failed."
 
 	bind_target
-	write_slot_files
 	moonlight-backup --restore-to "$TARGET" "$backup" \
 		|| die "The new system was copied, but your settings could not be restored. The current slot is still the default."
+	# Settings archives written by releases before 0.2.2 included the whole
+	# /etc/moonlight-os directory.  Restore the image-owned slot and release
+	# metadata after extracting one so an old archive cannot make the new root
+	# unbootable or make it claim to be the previous release.
+	write_slot_files
 
 	chroot "$TARGET" /bin/sh -eu <<-'CHROOT'
 		export DEBIAN_FRONTEND=noninteractive
@@ -284,7 +292,8 @@ prepare_target() {
 			live-config live-config-systemd 2>/dev/null || true
 		rm -f /etc/systemd/system/multi-user.target.wants/live-config.service \
 			/etc/profile.d/zz-live-config_xinit.sh 2>/dev/null || true
-		systemctl enable moonlight-update-confirm.timer >/dev/null 2>&1 || true
+		systemctl enable moonlight-slot-sync.service \
+			moonlight-update-confirm.timer >/dev/null 2>&1 || true
 		update-initramfs -u -k all >/dev/null
 	CHROOT
 

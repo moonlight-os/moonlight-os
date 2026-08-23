@@ -9,6 +9,24 @@ slots=/etc/moonlight-os/slots.conf
 # shellcheck disable=SC1090
 . "$slots"
 
+# Treat the recorded UUIDs as a fallback only.  Settings archives produced by
+# releases before 0.2.2 accidentally included slots.conf; restoring one after
+# formatting the inactive slot left its old UUID here.  update-grub runs with
+# access to the real block devices, so prefer the UUID currently attached to
+# each stable filesystem label.
+uuid_for_label() {
+	device=$(blkid -L "$1" 2>/dev/null || true)
+	[ -n "$device" ] || return 0
+	blkid -s UUID -o value "$device" 2>/dev/null || true
+}
+
+actual_root_a=$(uuid_for_label moonlight-root-a)
+actual_root_b=$(uuid_for_label moonlight-root-b)
+actual_boot=$(uuid_for_label moonlight-boot)
+[ -n "$actual_root_a" ] && MLOS_ROOT_A_UUID=$actual_root_a
+[ -n "$actual_root_b" ] && MLOS_ROOT_B_UUID=$actual_root_b
+[ -n "$actual_boot" ] && MLOS_BOOT_UUID=$actual_boot
+
 emit_slot() {
 	slot="$1"
 	root_uuid="$2"

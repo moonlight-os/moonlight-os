@@ -303,11 +303,13 @@ stage_release() {
 	[[ "$version" =~ ^[0-9][0-9A-Za-z.+:~_-]*$ ]] \
 		|| die "MLOS_VERSION contains unsupported characters: $MLOS_VERSION"
 	local dest="$HERE/config/includes.chroot/etc/moonlight-os/release"
+	local immutable="$HERE/config/includes.chroot/usr/share/moonlight-os/release"
 	local revision
 	revision="$(git -C "$HERE" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"
-	mkdir -p "$(dirname "$dest")"
+	mkdir -p "$(dirname "$dest")" "$(dirname "$immutable")"
 	printf 'FORMAT=2\nVERSION=%s\nBUILD_ID=%s\nREVISION=%s\n' \
 		"$version" "$(date -u +%Y%m%dT%H%M%SZ)" "$revision" > "$dest"
+	cp "$dest" "$immutable"
 	say "Moonlight OS release: $version ($revision)"
 }
 
@@ -383,6 +385,7 @@ do_clean() {
 			chown -R "$HOST_UID:$HOST_GID" /build 2>/dev/null || true' || true
 	rm -rf "$HERE/config/includes.chroot/etc/moonlight-os/authorized_keys" \
 	       "$HERE/config/includes.chroot/etc/moonlight-os/release" \
+	       "$HERE/config/includes.chroot/usr/share/moonlight-os/release" \
 	       "$HERE/config/includes.chroot/usr/bin/tailscale" \
 	       "$HERE/config/includes.chroot/usr/bin/.tailscale-version" \
 	       "$HERE/config/includes.chroot/usr/sbin/tailscaled" \

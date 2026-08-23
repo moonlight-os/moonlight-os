@@ -390,7 +390,8 @@ This cannot be undone. Continue?" 20 76 || exit 0
 			grub-install --target=i386-pc --recheck $disk >/dev/null 2>&1
 		fi
 
-		systemctl enable moonlight-update-confirm.timer >/dev/null 2>&1 || true
+		systemctl enable moonlight-slot-sync.service \
+			moonlight-update-confirm.timer >/dev/null 2>&1 || true
 		update-initramfs -u -k all >/dev/null 2>&1
 		kernel_version=\$(find /lib/modules -mindepth 1 -maxdepth 1 -type d \
 			-printf '%f\\n' | sort -V | tail -1)
@@ -448,6 +449,17 @@ A copy was left at $keep on the new disk.  Once it has
 booted, System -> Back up / restore settings will find it there."
 		fi
 		rm -f "$err"
+	fi
+
+	# Old settings archives included image-owned A/B metadata.  Put the values
+	# for this installation back after restoring one.
+	printf 'MLOS_ROOT_A_UUID=%s\nMLOS_ROOT_B_UUID=%s\nMLOS_BOOT_UUID=%s\nMLOS_ESP_UUID=%s\n' \
+		"$root_uuid" "$root_b_uuid" "$boot_uuid" "$esp_uuid" \
+		| mlos_root tee "$TARGET/etc/moonlight-os/slots.conf" >/dev/null
+	printf 'a\n' | mlos_root tee "$TARGET/etc/moonlight-os/slot" >/dev/null
+	if [ -r "$TARGET/usr/share/moonlight-os/release" ]; then
+		mlos_root cp "$TARGET/usr/share/moonlight-os/release" \
+			"$TARGET/etc/moonlight-os/release"
 	fi
 
 	mlos_root sync
