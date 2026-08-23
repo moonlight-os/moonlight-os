@@ -21,11 +21,6 @@ on:
         type: choice
         options: [full, slim]
         default: full
-      host_utils:
-        description: 'Which host-utils builds to carry on the ISO'
-        type: choice
-        options: [amd64, all, none]
-        default: amd64
       ssh_public_key:
         description: 'Public key authorised for the moonlight user (blank = none)'
         default: ''
@@ -55,8 +50,8 @@ jobs:
           sudo docker image prune -af
           df -h /
 
-      # cache/ holds the Tailscale tarball, the Go
-      # caches and live-build's .deb pool.  Restoring it cuts the download
+      # cache/ holds the Tailscale tarball and live-build's .deb pool.
+      # Restoring it cuts the download
       # from ~1 GB to almost nothing; the key rolls weekly so the pool does
       # not go stale (and stays under the 10 GB cache budget).
       - name: Restore download cache
@@ -99,7 +94,6 @@ jobs:
           ISO_VERSION: ${{ inputs.iso_version || '6.1.0' }}
           MLOS_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.os_version || '0~dev' }}
           FIRMWARE: ${{ inputs.firmware || 'full' }}
-          HOST_UTILS: ${{ inputs.host_utils || 'amd64' }}
           SSH_KEYS: ${{ steps.ssh.outputs.arg }}
           SELENE_SRC: ${{ github.workspace }}/selene
         run: ./build.sh

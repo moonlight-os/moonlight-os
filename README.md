@@ -54,7 +54,6 @@ Options:
 | `TAILSCALE_VERSION` | latest   | Pin Tailscale instead of taking current stable  |
 | `SSH_KEYS`          | `auto`   | Keys allowed in over SSH; `none`, or a path     |
 | `MLOS_SUITE`        | `trixie` | Debian release to base on                       |
-| `HOST_UTILS`        | `amd64`  | host-utils builds to carry; `all`, or `none`     |
 
 Write it to a USB stick:
 
@@ -369,9 +368,8 @@ so the command has to be retyped at the far end.
 - USB/IP's port 3240 stays inside the session tunnel. TCP 48020 is no longer a
   working data path and needs no firewall exception.
 
-`host-utils/README.md` documents the retired prototype. `tools/test-usb-auto.py`
-covers the sharing policy, and `tools/test-helper-usb-session.py` covers native
-session ownership, overlap, disconnect and restart recovery.
+`tools/test-helper-usb-session.py` covers sharing policy plus native session
+ownership, overlap, disconnect and restart recovery.
 
 ## The Ctrl+Alt+M hotkey
 
@@ -872,9 +870,9 @@ The scripts are POSIX `sh` and readable in one sitting:
 | `moonlight-osd`       | one line of text over the top of everything       |
 | `moonlight-region`    | keyboard layout + time zone                       |
 | `moonlight-usb`       | USB/IP passthrough                                |
-| `moonlight-usb-auto`  | watches USB, keeps the host PC in step          |
+| `moonlight-usb-auto`  | retired TCP-agent compatibility watcher        |
 | `moonlight-touch`     | points the touchscreen the same way as the screen |
-| `moonlight-hostagent` | speaks to mlos-host-utils on the host PC|
+| `moonlight-hostagent` | retired TCP-agent compatibility client         |
 | `moonlight-install`   | install to internal disk                          |
 | `moonlight-update`    | signed A/B OS updates and boot confirmation       |
 | `moonlight-persist`   | persistence partition on the boot USB             |

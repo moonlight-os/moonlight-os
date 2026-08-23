@@ -17,8 +17,6 @@
 #   SSH_KEYS=auto|none|<path>  which public keys may log in over SSH.
 #                              auto takes ~/.ssh/*.pub from this machine.
 #   MLOS_SUITE=trixie          Debian release to base on
-#   HOST_UTILS=amd64|all|none  which mlos-host-utils builds to carry
-#                              on the ISO for copying to the host PC
 #   MLOS_VERSION=0.2.0         OS release version written into the image
 #   INCREMENTAL=1              reuse the existing chroot (fast, but silently
 #                              ignores any config change -- debugging only)
@@ -35,8 +33,6 @@ FIRMWARE="${FIRMWARE:-full}"
 MLOS_SUITE="${MLOS_SUITE:-trixie}"
 TAILSCALE_VERSION="${TAILSCALE_VERSION:-}"
 SSH_KEYS="${SSH_KEYS:-auto}"
-HOST_UTILS="${HOST_UTILS:-amd64}"
-GO_IMAGE="${GO_IMAGE:-golang:1.24-bookworm}"
 # Used when pkgs.tailscale.com cannot be reached to ask what stable is.
 TAILSCALE_FALLBACK=1.102.2
 MSQUIC_VERSION=2.5.9
@@ -201,63 +197,6 @@ fetch_tailscale() {
 		" || die "could not unpack Tailscale"
 }
 
-# ------------------------------------------------------- host utils --------
-# The host PC half of USB passthrough, carried on the ISO so there is
-# something to copy across without a second machine and a browser.  The USB
-# passthrough menu prints the scp line that fetches it.
-#
-# amd64 is the default because a host PC is one, and shipping the arm64
-# builds as well doubles this for a case nobody has yet.
-build_host_utils() {
-	local dest="$HERE/config/includes.chroot/opt/mlos-host-utils"
-	rm -rf "$dest"
-
-	if [[ "$HOST_UTILS" == "none" ]]; then
-		say "Host utils: not carrying them on the ISO"
-		return
-	fi
-
-	local targets="linux/amd64 windows/amd64"
-	[[ "$HOST_UTILS" == "all" ]] && targets="linux/amd64 linux/arm64 windows/amd64 windows/arm64"
-
-	local version
-	version="$(date +%Y.%m.%d)"
-
-	say "Building mlos-host-utils $version ($HOST_UTILS)"
-	mkdir -p "$dest" "$HERE/cache/go-build" "$HERE/cache/go-mod"
-
-	# Built in the container so the toolchain is not a requirement for
-	# building the ISO, and so the binaries are reproducible across the
-	# machines people build this on.  Caches are kept in cache/ alongside
-	# the .debs, so a rebuild is quick and `clean` leaves them alone.
-	docker run --rm --network host \
-		-v "$HERE/host-utils:/src:ro" \
-		-v "$dest:/out" \
-		-v "$HERE/cache/go-build:/gocache" \
-		-v "$HERE/cache/go-mod:/gomod" \
-		-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
-		-e GOCACHE=/gocache -e GOMODCACHE=/gomod \
-		-e CGO_ENABLED=0 \
-		-w /src \
-		"$GO_IMAGE" bash -euc "
-			go vet ./...
-			go test ./...
-			for t in $targets; do
-				os=\${t%/*}; arch=\${t#*/}
-				name=mlos-host-utils-\$os-\$arch
-				[ \"\$os\" = windows ] && name=\$name.exe
-				GOOS=\$os GOARCH=\$arch go build -trimpath \
-					-ldflags '-s -w -X main.Version=$version' \
-					-o /out/\$name .
-			done
-			cp README.md /out/README.md
-			chmod -R a+rX /out
-			chown -R \$HOST_UID:\$HOST_GID /out
-		" || die "could not build mlos-host-utils"
-
-	say "Host utils: $(du -sh "$dest" | cut -f1) staged for the ISO"
-}
-
 # ------------------------------------------------------------- ssh keys ----
 # Password logins are off in the image, so whatever lands here is the only
 # way in over the network.  Staged root-side of the home directory; the user
@@ -320,7 +259,6 @@ do_build() {
 	build_builder_image
 	fetch_selene
 	fetch_tailscale
-	build_host_utils
 	stage_ssh_keys
 	stage_release
 
