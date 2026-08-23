@@ -81,16 +81,18 @@ verify_selene_package() {
 	local package="$1"
 	local setup_help='  setup           Run Moonlight OS first-run setup'
 	local panel_help='  panel           Open the Moonlight OS control centre'
+	local update_action='Update Moonlight OS'
 	local matches
 
 	matches="$(dpkg-deb --fsys-tarfile "$package" \
 		| tar -xOf - ./usr/bin/selene 2>/dev/null \
-		| { grep -aFo -e "$setup_help" -e "$panel_help"; grep_status=$?; [ "$grep_status" -le 1 ]; } \
+		| { grep -aFo -e "$setup_help" -e "$panel_help" -e "$update_action"; grep_status=$?; [ "$grep_status" -le 1 ]; } \
 		| sort -u)" \
 		|| die "could not inspect the Selene binary in $package"
 	if ! grep -Fx "$setup_help" <<< "$matches" >/dev/null \
-		|| ! grep -Fx "$panel_help" <<< "$matches" >/dev/null; then
-		die "Selene package lacks the setup/panel interface required by Moonlight OS: $package"
+		|| ! grep -Fx "$panel_help" <<< "$matches" >/dev/null \
+		|| ! grep -Fx "$update_action" <<< "$matches" >/dev/null; then
+		die "Selene package lacks the setup/panel/updater interface required by Moonlight OS: $package"
 	fi
 }
 
