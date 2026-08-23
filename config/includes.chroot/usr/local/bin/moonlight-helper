@@ -1836,20 +1836,32 @@ def op_install_status(args, emit):
 
 
 def launch_system_workflow(workflow, workflow_env=None):
-    # Let Selene remove its own overlay/window first, then let moonlight-panel
-    # capture and restore the real previously focused stream workspace.
-    time.sleep(0.5)
-    try:
-        environment = ["env", "MLOS_PANEL_COMMAND=%s" % workflow]
-        for key, value in sorted((workflow_env or {}).items()):
-            environment.append("%s=%s" % (key, value))
-        subprocess.Popen(
-            session_argv(environment + ["/usr/local/bin/moonlight-panel"]),
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True,
-        )
-    except OSError as err:
-        log("could not launch %s workflow: %s" % (workflow, err))
+    # Processes forked directly from this hardened service inherit
+    # NoNewPrivileges=yes. The old launcher then changed to the moonlight user
+    # and opened a terminal whose fixed sudo command could never become root:
+    # foot disappeared immediately and the compositor returned to Selene.
+    #
+    # Ask PID 1 to create a fresh, unprivileged transient service instead.
+    # It does not inherit this helper's sandbox, while the sudo policy still
+    # permits only the named appliance workflows. --service-type=exec makes
+    # systemd-run report an exec failure before we tell Selene to close.
+    argv = [
+        "systemd-run", "--quiet", "--collect", "--service-type=exec",
+        "--uid=moonlight",
+        "--setenv=XDG_RUNTIME_DIR=/run/user/1000",
+        "--setenv=WAYLAND_DISPLAY=wayland-1",
+        "--setenv=MLOS_PANEL_COMMAND=%s" % workflow,
+    ]
+    sockets = sorted(glob.glob("/run/user/1000/sway-ipc.*.sock"))
+    if sockets:
+        argv.append("--setenv=SWAYSOCK=%s" % sockets[0])
+    for key, value in sorted((workflow_env or {}).items()):
+        argv.append("--setenv=%s=%s" % (key, value))
+    argv.append("/usr/local/bin/moonlight-panel")
+
+    out, err = run(argv, timeout=10)
+    if out is None:
+        raise Error(E_FAILED, "the %s workflow could not be opened: %s" % (workflow, err))
 
 
 def op_system_launch(args, emit):
@@ -1882,8 +1894,7 @@ def op_system_launch(args, emit):
         workflow_env["MLOS_INSTALL_DEVICE"] = selected
         result["device"] = selected
 
-    threading.Thread(target=launch_system_workflow,
-                     args=(workflow, workflow_env), daemon=True).start()
+    launch_system_workflow(workflow, workflow_env)
     return result
 
 

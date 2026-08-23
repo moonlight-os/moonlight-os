@@ -191,17 +191,31 @@ class InstallInventoryTest(unittest.TestCase):
         inventory = {"targets": [{"device": "/dev/nvme0n1"}]}
         with mock.patch.object(helper, "op_system_context", return_value=context), \
              mock.patch.object(helper, "op_install_status", return_value=inventory), \
-             mock.patch.object(helper.threading, "Thread") as thread:
+             mock.patch.object(helper, "launch_system_workflow") as launch:
             result = helper.op_system_launch(
                 {"workflow": "install", "device": "/dev/nvme0n1"},
                 lambda message: None,
             )
 
         self.assertEqual(result["device"], "/dev/nvme0n1")
-        self.assertEqual(
-            thread.call_args.kwargs["args"],
-            ("install", {"MLOS_INSTALL_DEVICE": "/dev/nvme0n1"}),
-        )
+        launch.assert_called_once_with(
+            "install", {"MLOS_INSTALL_DEVICE": "/dev/nvme0n1"})
+
+    def test_workflow_escapes_helper_no_new_privileges_as_unprivileged_unit(self):
+        with mock.patch.object(helper.glob, "glob", return_value=["/run/user/1000/sway.sock"]), \
+             mock.patch.object(helper, "run", return_value=("", None)) as run:
+            helper.launch_system_workflow(
+                "install", {"MLOS_INSTALL_DEVICE": "/dev/nvme0n1"})
+
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[0], "systemd-run")
+        self.assertIn("--service-type=exec", argv)
+        self.assertIn("--uid=moonlight", argv)
+        self.assertIn("--setenv=MLOS_PANEL_COMMAND=install", argv)
+        self.assertIn("--setenv=MLOS_INSTALL_DEVICE=/dev/nvme0n1", argv)
+        self.assertIn("--setenv=SWAYSOCK=/run/user/1000/sway.sock", argv)
+        self.assertEqual(argv[-1], "/usr/local/bin/moonlight-panel")
+        self.assertNotIn("runuser", argv)
 
     def test_install_launch_rejects_a_stale_target(self):
         context = {"terminal_available": True, "install_available": True,
@@ -220,13 +234,13 @@ class InstallInventoryTest(unittest.TestCase):
                    "persistence_available": False, "persistence": False,
                    "update_available": True}
         with mock.patch.object(helper, "op_system_context", return_value=context), \
-             mock.patch.object(helper.threading, "Thread") as thread:
+             mock.patch.object(helper, "launch_system_workflow") as launch:
             result = helper.op_system_launch(
                 {"workflow": "update"}, lambda message: None,
             )
 
         self.assertEqual(result, {"launched": "update"})
-        self.assertEqual(thread.call_args.kwargs["args"], ("update", {}))
+        launch.assert_called_once_with("update", {})
 
 
 class ClientProtocolTest(unittest.TestCase):
