@@ -117,6 +117,50 @@ class HiddenWifiTest(unittest.TestCase):
         self.assertEqual(calls[0], ["nmcli", "connection", "delete", "uuid", uuid])
 
 
+class TailscaleLoginTest(unittest.TestCase):
+    def test_json_login_payload_preserves_url_and_png_qr(self):
+        output = """Connecting...\n{
+          \"AuthURL\": \"https://login.tailscale.com/a/0123456789abcdef\",
+          \"QR\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==\",
+          \"BackendState\": \"NeedsLogin\"
+        }\n"""
+
+        url, qr = helper.tailscale_login_payload(output)
+
+        self.assertEqual(url, "https://login.tailscale.com/a/0123456789abcdef")
+        self.assertEqual(qr, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==")
+
+    def test_login_payload_rejects_non_png_or_oversized_qr_data(self):
+        url = "https://login.tailscale.com/a/0123456789abcdef"
+        non_png = json.dumps({"AuthURL": url, "QR": "data:image/svg+xml;base64,AAAA"})
+        oversized = json.dumps({"AuthURL": url,
+                                "QR": "data:image/png;base64," + "A" * 262145})
+
+        self.assertEqual(helper.tailscale_login_payload(non_png), (url, ""))
+        self.assertEqual(helper.tailscale_login_payload(oversized), (url, ""))
+
+    def test_connect_requests_tailscales_json_png_qr(self):
+        output = json.dumps({
+            "AuthURL": "https://login.tailscale.com/a/0123456789abcdef",
+            "QR": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+            "BackendState": "NeedsLogin",
+        })
+        process = mock.Mock()
+        process.communicate.return_value = (output, None)
+
+        with mock.patch.object(helper, "op_tailscale_status", side_effect=[
+                {"state": "NeedsLogin"}, {"state": "NeedsLogin"}]), \
+             mock.patch.object(helper.subprocess, "Popen", return_value=process) as popen:
+            result = helper.op_tailscale_connect({}, lambda message: None)
+
+        self.assertEqual(popen.call_args.args[0], [
+            "tailscale", "up", "--qr", "--json", "--timeout=8s",
+        ])
+        self.assertEqual(result["login_url"],
+                         "https://login.tailscale.com/a/0123456789abcdef")
+        self.assertTrue(result["login_qr"].startswith("data:image/png;base64,"))
+
+
 class InstallInventoryTest(unittest.TestCase):
     def inventory(self):
         return json.dumps({"blockdevices": [
