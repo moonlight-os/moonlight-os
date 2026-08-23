@@ -17,7 +17,11 @@ mlos_load
 moonlight-region --apply-session
 
 # Trackpad scroll direction, touchscreen mapping.
-moonlight-input --apply
+# Persistence is handled when the setting changes.  Session startup runs as
+# the appliance user, so only touch the live compositor and its own Selene
+# preference here; retrying the root-owned drop-in would prompt for sudo on
+# every boot and still fail.
+moonlight-input --apply-session
 
 # Record the real output layout so the (TTY-side) display menu has
 # something accurate to offer next time it runs.
