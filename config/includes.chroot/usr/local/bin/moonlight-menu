@@ -230,7 +230,8 @@ which is a plain shell file you can also edit by hand.')" \
 			persist) sudo -n /usr/local/bin/moonlight-persist ;;
 			update)  sudo -n /usr/local/sbin/moonlight-update --menu ;;
 			shell)   clear
-			         command -v fastfetch >/dev/null 2>&1 && fastfetch
+			         command -v fastfetch >/dev/null 2>&1 \
+					 && fastfetch --config /etc/fastfetch/config.jsonc
 			         printf '\nType "exit" to return to the Moonlight menu.\n\n'
 			         ${SHELL:-/bin/bash} -l || true ;;
 			back)    return 0 ;;

@@ -25,9 +25,6 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE=moonlight-os-builder
-# Stamped into the ISO filename. It used to select which Moonlight AppImage to
-# download; the client is now built from source, so it is only a label.
-ISO_VERSION="${ISO_VERSION:-6.2.1}"
 MLOS_VERSION="${MLOS_VERSION:-0~dev}"
 FIRMWARE="${FIRMWARE:-full}"
 MLOS_SUITE="${MLOS_SUITE:-trixie}"
@@ -307,13 +304,21 @@ do_build() {
 	iso="$(find "$HERE" -maxdepth 1 -name "moonlight-os*.iso" -print -quit)"
 	[[ -n "$iso" ]] || die "the build finished but produced no ISO."
 
-	local stamp
+	local stamp image_version image_path
 	stamp="$(date +%Y%m%d)"
-	mv "$iso" "$HERE/out/moonlight-os-${ISO_VERSION}-${stamp}.iso"
+	# MLOS_VERSION uses Debian ordering for prereleases (for example
+	# 0.3.0~beta.1). Use the equivalent tag-style spelling in filenames.
+	image_version="${MLOS_VERSION#v}"
+	image_version="${image_version//~/-}"
+	image_version="${image_version//:/-}"
+	[[ "$image_version" =~ ^[0-9][0-9A-Za-z.+_-]*$ ]] \
+		|| die "MLOS_VERSION cannot be represented safely in the ISO filename: $MLOS_VERSION"
+	image_path="$HERE/out/moonlight-os-${image_version}-${stamp}.iso"
+	mv "$iso" "$image_path"
 
-	say "Done: out/moonlight-os-${ISO_VERSION}-${stamp}.iso ($(du -h "$HERE/out/moonlight-os-${ISO_VERSION}-${stamp}.iso" | cut -f1))"
+	say "Done: out/$(basename "$image_path") ($(du -h "$image_path" | cut -f1))"
 	printf '\nWrite it to a USB stick with:\n  sudo dd if=out/moonlight-os-%s-%s.iso of=/dev/sdX bs=4M status=progress oflag=sync\n\n' \
-		"$ISO_VERSION" "$stamp"
+		"$image_version" "$stamp"
 }
 
 do_clean() {
