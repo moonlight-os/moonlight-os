@@ -138,9 +138,9 @@ jobs:
           tag="${{ steps.release.outputs.tag }}"
           sha256="$(sha256sum "$iso" | awk '{ print $1 }')"
           size="$(wc -c < "$iso" | tr -d '[:space:]')"
-          printf 'format=2\nversion=%s\ntag=%s\niso=%s\nsha256=%s\nsize=%s\n' \
+          tools/render-update-manifest.sh \
             "$version" "$tag" "$(basename "$iso")" "$sha256" "$size" \
-            > out/moonlight-os-update.txt
+            out/moonlight-os-update.txt
           key="$RUNNER_TEMP/moonlight-os-update.pem"
           printf '%s\n' "$SIGNING_KEY" > "$key"
           chmod 0600 "$key"
