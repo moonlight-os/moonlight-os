@@ -2,7 +2,7 @@
 # One fact per call, for things that want a plain string -- fastfetch's
 # Command modules, mostly.  Keeping the shell out of the JSON config.
 #
-#   moonlight-facts version | host | screen | layout | tailscale
+#   moonlight-facts os-version | version | host | screen | layout | tailscale
 #
 # shellcheck source=./moonlight-common
 . /usr/local/bin/moonlight-common 2>/dev/null || exit 0
@@ -10,6 +10,12 @@
 mlos_load 2>/dev/null || true
 
 case "${1:-}" in
+	os-version)
+		release=/etc/moonlight-os/release
+		[ -r "$release" ] || release=/usr/share/moonlight-os/release
+		version=$(sed -n 's/^VERSION=//p' "$release" 2>/dev/null | head -1)
+		printf '%s' "${version:-unknown}"
+		;;
 	version)
 		dpkg-query -W -f='${Version}' selene 2>/dev/null || printf 'unknown'
 		;;
@@ -40,7 +46,7 @@ case "${1:-}" in
 		fi
 		;;
 	*)
-		printf 'usage: moonlight-facts version|host|screen|layout|tailscale\n' >&2
+		printf 'usage: moonlight-facts os-version|version|host|screen|layout|tailscale\n' >&2
 		exit 2
 		;;
 esac

@@ -21,6 +21,7 @@
         "title",
         "separator",
         { "type": "os",      "key": "OS" },
+        { "type": "command", "key": "Moonlight OS", "text": "moonlight-facts os-version" },
         { "type": "kernel",  "key": "Kernel" },
         { "type": "host",    "key": "Machine" },
         { "type": "uptime",  "key": "Uptime" },
@@ -31,7 +32,7 @@
 
         "break",
 
-        { "type": "command", "key": "Moonlight", "text": "moonlight-facts version" },
+        { "type": "command", "key": "Selene",    "text": "moonlight-facts version" },
         { "type": "command", "key": "Streams to", "text": "moonlight-facts host" },
         { "type": "command", "key": "On screen",  "text": "moonlight-facts screen" },
         { "type": "command", "key": "Layout",     "text": "moonlight-facts layout" },

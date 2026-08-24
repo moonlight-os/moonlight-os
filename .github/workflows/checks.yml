@@ -24,6 +24,7 @@ jobs:
           python3 tools/test-updater-contract.py
           python3 tools/test-updater-channel.py
           python3 tools/test-update-manifest.py
+          python3 tools/test-version-branding.py
           python3 tools/test-session-contract.py
       - name: Python syntax
         run: |
