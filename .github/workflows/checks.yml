@@ -23,6 +23,7 @@ jobs:
           done
           python3 tools/test-updater-contract.py
           python3 tools/test-updater-channel.py
+          python3 tools/test-update-manifest.py
           python3 tools/test-session-contract.py
       - name: Python syntax
         run: |
@@ -44,7 +45,8 @@ jobs:
             config/includes.chroot/usr/local/sbin/moonlight-update \
             config/includes.chroot/usr/local/sbin/moonlight-slot-sync \
             config/includes.chroot/etc/grub.d/09_moonlight_slots \
-            config/hooks/normal/0050-moonlight-updater.hook.chroot
+            config/hooks/normal/0050-moonlight-updater.hook.chroot \
+            tools/render-update-manifest.sh
       - name: Sudo policy has no unrestricted rule
         run: |
           ! grep -Eq "NOPASSWD:[[:space:]]*(ALL|/bin/(ba)?sh)" config/includes.chroot/etc/sudoers.d/moonlight

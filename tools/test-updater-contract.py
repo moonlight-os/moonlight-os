@@ -22,6 +22,7 @@ backup = text("config/includes.chroot/usr/local/bin/moonlight-backup")
 slot_sync_path = ROOT / "config/includes.chroot/usr/local/sbin/moonlight-slot-sync"
 slot_sync = slot_sync_path.read_text(encoding="utf-8")
 workflow = text(".github/workflows/iso.yml")
+manifest_renderer = text("tools/render-update-manifest.sh")
 timer = text(
     "config/includes.chroot/etc/systemd/system/moonlight-update-confirm.timer"
 )
@@ -69,13 +70,16 @@ assert 'MANIFEST_URL="$RELEASES_URL/download/$AVAILABLE_TAG/$MANIFEST_NAME"' in 
 assert 'url="$RELEASES_URL/download/${AVAILABLE_TAG}/${AVAILABLE_ISO}"' in updater
 assert 'manifest_tag=$(manifest_value tag)' in updater
 assert 'manifest_tag" != "$AVAILABLE_TAG' in updater
-assert "format=2\\nversion=%s\\ntag=%s" in workflow
+assert "tools/render-update-manifest.sh" in workflow
+assert "format=1\\nversion=%s" in manifest_renderer
+assert "format=2\\nversion=%s\\ntag=%s" in manifest_renderer
 assert "${version/-beta./~beta.}" in workflow
 assert '--prerelease' in workflow
 
 assert "MLOS_UPDATE_SIGNING_KEY" in workflow
 assert os.stat(updater_path).st_mode & 0o111
 assert os.stat(ROOT / "tools/test-updater-channel.py").st_mode & 0o111
+assert os.stat(ROOT / "tools/render-update-manifest.sh").st_mode & 0o111
 assert os.stat(grub_path).st_mode & 0o111
 assert os.stat(slot_sync_path).st_mode & 0o111
 
