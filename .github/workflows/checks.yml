@@ -47,6 +47,7 @@ jobs:
             config/includes.chroot/usr/local/sbin/moonlight-slot-sync \
             config/includes.chroot/etc/grub.d/09_moonlight_slots \
             config/hooks/normal/0050-moonlight-updater.hook.chroot \
+            tools/format-iso-version.sh \
             tools/render-update-manifest.sh
       - name: Sudo policy has no unrestricted rule
         run: |
