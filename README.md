@@ -38,7 +38,7 @@ Needs `docker` and about 8 GB of free disk. Nothing is installed on your host �
 `live-build` runs inside a throwaway Debian container.
 
 ```sh
-./build.sh                    # -> out/moonlight-os-6.2.1-YYYYMMDD.iso
+./build.sh                    # -> out/moonlight-os-0-dev-YYYYMMDD.iso
 ./build.sh clean              # remove build artifacts, keep the download cache
 ./build.sh shell              # poke around inside the build container
 ```
@@ -47,8 +47,7 @@ Options:
 
 | Variable            | Default  | Effect                                          |
 | ------------------- | -------- | ----------------------------------------------- |
-| `ISO_VERSION`       | `6.2.1`  | Version label stamped into the ISO filename     |
-| `MLOS_VERSION`      | `0~dev`  | Installed OS version used by the updater         |
+| `MLOS_VERSION`      | `0~dev`  | Installed OS and ISO filename version (`~` becomes `-`) |
 | `SELENE_SRC`        | `~/moonlight-os-stuff/selene` | Selene checkout to build the client from |
 | `FIRMWARE`          | `full`   | `slim` drops ~400 MB of firmware blobs          |
 | `TAILSCALE_VERSION` | latest   | Pin Tailscale instead of taking current stable  |
@@ -58,7 +57,7 @@ Options:
 Write it to a USB stick:
 
 ```sh
-sudo dd if=out/moonlight-os-6.2.1-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=out/moonlight-os-0-dev-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 ### Keeping it small
@@ -145,7 +144,7 @@ countdown.
 
 ```sh
 qemu-system-x86_64 -enable-kvm -m 3072 -smp 2 \
-    -cdrom out/moonlight-os-6.2.1-*.iso -boot d \
+    -cdrom out/moonlight-os-0-dev-*.iso -boot d \
     -vga std -netdev user,id=n0 -device e1000,netdev=n0
 ```
 
@@ -677,10 +676,10 @@ garbled logo. The committed artwork is 8-bit; regenerating it keeps it that
 way.
 
 `fastfetch` is configured in `/etc/fastfetch/config.jsonc` and shows the
-Moonlight-specific facts alongside the usual ones — which host it streams to,
-which screen it uses, which layout is in force. The values come from
-`moonlight-facts`, which keeps shell out of the JSON. Quitting to the command
-line runs it.
+Moonlight OS release and Selene client versions alongside the usual facts —
+which host it streams to, which screen it uses, which layout is in force. The
+values come from `moonlight-facts`, which keeps shell out of the JSON. Quitting
+to the command line runs it.
 
 ## Design notes
 

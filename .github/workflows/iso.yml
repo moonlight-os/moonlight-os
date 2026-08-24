@@ -7,11 +7,8 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      iso_version:
-        description: 'Version label stamped into the ISO filename'
-        default: '6.2.1'
       os_version:
-        description: 'Installed OS version (tag builds use the tag)'
+        description: 'Installed OS version and ISO filename version (tag builds use the tag)'
         default: '0~dev'
       selene_ref:
         description: 'Compatible Selene ref (must provide setup and panel actions)'
@@ -75,9 +72,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: cache
-          key: mlos-cache-${{ inputs.iso_version || '6.2.1' }}-${{ github.run_id }}
+          key: mlos-cache-${{ github.run_id }}
           restore-keys: |
-            mlos-cache-${{ inputs.iso_version || '6.2.1' }}-
+            mlos-cache-
 
       - name: Stage SSH key
         id: ssh
@@ -108,7 +105,6 @@ jobs:
 
       - name: Build the ISO
         env:
-          ISO_VERSION: ${{ inputs.iso_version || '6.2.1' }}
           MLOS_VERSION: ${{ steps.release.outputs.version }}
           FIRMWARE: ${{ inputs.firmware || 'full' }}
           SSH_KEYS: ${{ steps.ssh.outputs.arg }}
