@@ -308,10 +308,7 @@ do_build() {
 	stamp="$(date +%Y%m%d)"
 	# MLOS_VERSION uses Debian ordering for prereleases (for example
 	# 0.3.0~beta.1). Use the equivalent tag-style spelling in filenames.
-	image_version="${MLOS_VERSION#v}"
-	image_version="${image_version//~/-}"
-	image_version="${image_version//:/-}"
-	[[ "$image_version" =~ ^[0-9][0-9A-Za-z.+_-]*$ ]] \
+	image_version="$("$HERE/tools/format-iso-version.sh" "$MLOS_VERSION")" \
 		|| die "MLOS_VERSION cannot be represented safely in the ISO filename: $MLOS_VERSION"
 	image_path="$HERE/out/moonlight-os-${image_version}-${stamp}.iso"
 	mv "$iso" "$image_path"
