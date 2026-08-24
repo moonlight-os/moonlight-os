@@ -15,6 +15,15 @@ for svc in NetworkManager NetworkManager-wait-online avahi-daemon usbipd \
 	systemctl enable "$svc" 2>/dev/null || true
 done
 
+# Ship a real wired DHCP profile instead of relying on NetworkManager's
+# temporary "Wired connection 1" profile.  Live boots start from a clean
+# overlay every time, so an explicit profile is what makes Ethernet retry
+# indefinitely and behave identically after every reboot.  NetworkManager
+# intentionally ignores keyfiles that are readable by non-root users.
+if [ -f /etc/NetworkManager/system-connections/moonlight-wired.nmconnection ]; then
+	chmod 0600 /etc/NetworkManager/system-connections/moonlight-wired.nmconnection
+fi
+
 # The privileged helper behind the in-client settings panel. Enabled here
 # rather than by a package because, like everything in this image, it is a
 # file dropped into includes.chroot with no postinst to do it.

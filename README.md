@@ -159,8 +159,9 @@ Live USB is fine forever, but if you want it on the machine's own drive, the
 welcome screen offers it as the first thing a live boot asks — nothing else
 has to be answered to get there. Later on it is Ctrl+Alt+M → **System** →
 **Install to this computer**. Either way it wipes the chosen disk, creates two
-system slots around a shared boot partition, copies the system into slot A,
-and installs GRUB for both UEFI and BIOS. A disk of at least 20 GB is required.
+LVM system slots around a shared boot partition, reserves space for safe live
+snapshots, copies the system into slot A, and installs GRUB for both UEFI and
+BIOS. A disk of at least 24 GB is required.
 The USB stick you booted from is excluded from the disk list so you can't
 overwrite it mid-install.
 
@@ -184,6 +185,14 @@ The updater downloads the latest release ISO and a small Ed25519-signed
 manifest. It verifies the manifest, download size, and SHA-256 hash before it
 changes a partition; a bad or missing signature stops the update.
 
+The updater and Selene control centre expose a persistent **Stable/Beta**
+channel toggle. Stable follows GitHub's latest normal release. Beta discovers
+the newest GitHub prerelease tag and downloads that tag's signed manifest;
+drafts and ordinary releases are never selected by the Beta channel. The
+choice lives in `moonlight-os.conf`, survives A/B updates and settings restore,
+and can be switched back at any time. A tag such as `v0.2.8-beta.1` installs as
+`0.2.8~beta.1`, ensuring the eventual `0.2.8` stable release sorts newer.
+
 The running system is never rewritten. The new image goes into the inactive
 root slot, the machine settings are merged into it, and GRUB tries that slot
 once. A system that remains up for 90 seconds marks the new slot as the
@@ -197,9 +206,31 @@ network, Bluetooth, Tailscale, SSH identity, and the machine ID. Updates after
 that happen from the built-in menu.
 
 Tag releases produce `moonlight-os-update.txt` and its signature alongside the
-ISO. The repository secret `MLOS_UPDATE_SIGNING_KEY` holds the private Ed25519
-key; the matching public key is pinned in the image. Changing that key is a
-trust-root rotation and must be shipped in an already trusted image first.
+ISO. Prerelease-suffixed tags become GitHub prereleases and stay invisible to
+Stable systems. The repository secret `MLOS_UPDATE_SIGNING_KEY` holds the
+private Ed25519 key; the matching public key is pinned in the image. Changing
+that key is a trust-root rotation and must be shipped in an already trusted
+image first.
+
+## Shared system disk
+
+During a Helios stream, the active Moonlight OS root volume can appear on the
+host as a real read-only iSCSI disk. The helper briefly freezes the filesystem,
+creates an LVM point-in-time snapshot, gives that session unique CHAP
+credentials, and exposes the target only through the authenticated stream
+tunnel. The live root volume itself is never exported.
+
+Selene reports snapshot capacity and usage under **System & maintenance →
+Shared system disk**, and shows the host's attaching, attached, failed,
+detaching, and detached state over the stream. If the reserved copy-on-write
+area fills, the iSCSI target is withdrawn immediately. Power and
+settings-restore operations stay blocked until the stream disconnects and the
+snapshot has been removed.
+
+Installations made before the LVM layout cannot be snapshotted safely. They
+refuse disk sharing with a reinstall message instead of exposing a
+crash-consistent live device; reinstalling from a current image can carry the
+existing settings across.
 
 ## The menus
 

@@ -124,7 +124,7 @@ fetch_selene() {
 
 	if [[ -z "${SELENE_REBUILD:-}" ]] && compgen -G "$dest/selene_*.deb" >/dev/null; then
 		local staged_package
-		staged_package="$(compgen -G "$dest/selene_*.deb" | head -1)"
+		staged_package="$(compgen -G "$dest/selene_*.deb" | sort -V | tail -n 1)"
 		verify_selene_package "$staged_package"
 		say "Using the Selene package already staged in packages.chroot"
 		return
@@ -136,11 +136,15 @@ fetch_selene() {
 	MLOS_SUITE="$MLOS_SUITE" "$SELENE_SRC/scripts/build-deb.sh" \
 		|| die "Selene package build failed"
 
-	rm -f "$dest"/selene_*.deb
-	cp "$SELENE_SRC"/dist/selene_*.deb "$dest/" \
+	local built_package
+	built_package="$(find "$SELENE_SRC/dist" -maxdepth 1 -type f \
+		-name 'selene_*_amd64.deb' -printf '%p\n' | sort -V | tail -n 1)"
+	[[ -n "$built_package" && -f "$built_package" ]] \
 		|| die "no Selene .deb was produced"
+	rm -f "$dest"/selene_*.deb
+	cp "$built_package" "$dest/"
 	local staged_package
-	staged_package="$(compgen -G "$dest/selene_*.deb" | head -1)"
+	staged_package="$dest/$(basename "$built_package")"
 	verify_selene_package "$staged_package"
 	say "Staged $(basename "$staged_package")"
 }

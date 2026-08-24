@@ -21,7 +21,11 @@ grub = grub_path.read_text(encoding="utf-8")
 backup = text("config/includes.chroot/usr/local/bin/moonlight-backup")
 slot_sync_path = ROOT / "config/includes.chroot/usr/local/sbin/moonlight-slot-sync"
 slot_sync = slot_sync_path.read_text(encoding="utf-8")
+panel = text("config/includes.chroot/usr/local/bin/moonlight-panel")
+sudoers = text("config/includes.chroot/etc/sudoers.d/moonlight")
+helper_unit = text("config/includes.chroot/etc/systemd/system/moonlight-helper.service")
 workflow = text(".github/workflows/iso.yml")
+build = text("build.sh")
 timer = text(
     "config/includes.chroot/etc/systemd/system/moonlight-update-confirm.timer"
 )
@@ -29,6 +33,31 @@ timer = text(
 for label in ("moonlight-boot", "moonlight-root-a", "moonlight-root-b"):
     assert label in installer, f"installer does not create {label}"
     assert label in updater or label == "moonlight-boot", f"updater misses {label}"
+
+assert "-t 4:8e00" in installer
+assert 'pvcreate --force --force --yes "$root_pv"' in installer
+assert "vgcreate" in installer
+deactivate_at = installer.index('deactivate_target_vgs "$disk"')
+partition_wipe_at = installer.index('wipe_target_partition_signatures "$disk"')
+wipe_at = installer.index('wipefs -a "$disk"')
+assert deactivate_at < partition_wipe_at < wipe_at
+assert 'pvs --noheadings -o vg_name "$candidate"' in installer
+assert 'vgchange --activate n "$old_vg"' in installer
+assert 'awk \'$2 == "part" { print $1 }\'' in installer
+assert 'wipefs -a "$candidate"' in installer
+assert installer.count("--extents 43%VG") == 2
+assert '$2 >= 24000000000' in installer
+assert "at least 24 GB" in installer
+assert "lvm2" in text("config/package-lists/moonlight-os.list.chroot")
+assert "lsblk -srnpo NAME,TYPE" in updater
+assert "--preserve-env=MLOS_INSTALL_DEVICE" in panel
+assert 'env_keep += "MLOS_INSTALL_DEVICE"' in sudoers
+assert "ProtectSystem=strict" in helper_unit
+assert "rtslib_tcm.lock_file = DISK_RTSLIB_LOCK" in text(
+    "config/includes.chroot/usr/local/bin/moonlight-helper"
+)
+for lvm_write_path in ("-/run/lvm", "-/run/lock/lvm", "-/etc/lvm/archive", "-/etc/lvm/backup"):
+    assert lvm_write_path in helper_unit
 
 assert "GRUB_DEFAULT=saved" in text("config/includes.chroot/etc/default/grub")
 assert "--id 'moonlight-$slot'" in grub
@@ -51,7 +80,13 @@ assert "/etc/moonlight-os\n" not in backup
 assert "/etc/moonlight-os/moonlight-os.conf" in backup
 assert "/etc/moonlight-os/.configured" in backup
 assert "/usr/share/moonlight-os/release" in slot_sync
-assert "/usr/share/moonlight-os/release" in text("build.sh")
+assert 'lsblk -srnpo NAME,TYPE "$ROOT_DEV"' in slot_sync
+assert 'lsblk -ndo PKNAME "$ROOT_DEV"' not in slot_sync
+assert "/usr/share/moonlight-os/release" in build
+assert 'cp "$SELENE_SRC"/dist/selene_*.deb' not in build
+assert "-name 'selene_*_amd64.deb'" in build
+assert 'cp "$built_package" "$dest/"' in build
+assert "sort -V | tail -n 1" in build
 assert "moonlight-slot-sync.service" in text(
     "config/hooks/normal/0050-moonlight-updater.hook.chroot"
 )
@@ -60,9 +95,22 @@ for asset in ("moonlight-os-update.txt", "moonlight-os-update.txt.sig"):
     assert asset in workflow
 assert "moonlight-os-update.txt" in updater
 assert "SIGNATURE_URL=${MANIFEST_URL}.sig" in updater
+assert "UPDATE_CHANNEL" in updater
+assert "UPDATE_CHANNEL=\"stable\"" in text(
+    "config/includes.chroot/etc/moonlight-os/moonlight-os.conf"
+)
+assert "r.get(\"prerelease\") and not r.get(\"draft\")" in updater
+assert 'MANIFEST_URL="$RELEASES_URL/download/$AVAILABLE_TAG/$MANIFEST_NAME"' in updater
+assert 'url="$RELEASES_URL/download/${AVAILABLE_TAG}/${AVAILABLE_ISO}"' in updater
+assert 'manifest_tag=$(manifest_value tag)' in updater
+assert 'manifest_tag" != "$AVAILABLE_TAG' in updater
+assert "format=2\\nversion=%s\\ntag=%s" in workflow
+assert "${version/-beta./~beta.}" in workflow
+assert '--prerelease' in workflow
 
 assert "MLOS_UPDATE_SIGNING_KEY" in workflow
 assert os.stat(updater_path).st_mode & 0o111
+assert os.stat(ROOT / "tools/test-updater-channel.py").st_mode & 0o111
 assert os.stat(grub_path).st_mode & 0o111
 assert os.stat(slot_sync_path).st_mode & 0o111
 

@@ -44,6 +44,7 @@ import json
 import glob
 import os
 import re
+import secrets
 import shutil
 import socket
 import stat
@@ -85,7 +86,7 @@ REGION_LOCK = threading.Lock()
 BACKUP_LOCK = threading.Lock()
 USB_SESSION_LOCK = threading.Lock()
 DISK_SESSION_LOCK = threading.Lock()
-INSTALL_MIN_BYTES = 20_000_000_000
+INSTALL_MIN_BYTES = 24_000_000_000
 FIRST_RUN_FLAG = "/etc/moonlight-os/.configured"
 WELCOME_FLAG = "/run/moonlight-os/welcome-done"
 # Bus IDs acquired by native Selene sessions, with a reference count for the
@@ -95,10 +96,12 @@ WELCOME_FLAG = "/run/moonlight-os/welcome-done"
 USB_SESSION_REFS = {}
 USB_SESSION_STATE = "/run/moonlight-os/usb-session-owned"
 DISK_SESSION_STATE = "/run/moonlight-os/disk-session-owned"
-DISK_DM_NAME = "moonlight-os-session-disk"
+DISK_LEGACY_DM_NAMES = ("moonlight-os-session-disk", "moonlight-os-session-snapshot")
 DISK_BACKSTORE = "moonlight_os_system"
-DISK_TARGET_IQN = "iqn.2026-08.os.moonlight:system"
+DISK_LEGACY_TARGET_IQN = "iqn.2026-08.os.moonlight:system"
+DISK_TARGET_IQN_PREFIX = "iqn.2026-08.os.moonlight:system."
 DISK_PORT = 3260
+DISK_RTSLIB_LOCK = "/run/moonlight-os/rtslib_backstore.lock"
 DISK_SESSION_REFS = 0
 DISK_SESSION_INFO = None
 KEYBOARD_CONF = "/etc/default/keyboard"
@@ -127,6 +130,7 @@ SETTING_DEFAULTS = {
     "FORCE_SOFTWARE": "no",
     "BATTERY_WARN": "yes",
     "BATTERY_LEVELS": "20 10 5",
+    "UPDATE_CHANNEL": "stable",
     "USB_AUTOSHARE": "no",
     "USB_AUTOSHARE_POLICY": "safe",
     "KEYBOARD_LAYOUT": "us",
@@ -156,7 +160,9 @@ def run(argv, timeout=30, input_text=None):
 
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
-        return None, detail[-1] if detail else "%s failed" % argv[0]
+        # Keep enough context to identify the rejected argument or device;
+        # LVM and NetworkManager often put only a generic summary last.
+        return None, "; ".join(detail[-3:]) if detail else "%s failed" % argv[0]
 
     return proc.stdout, None
 
@@ -226,6 +232,7 @@ def conf_public(values=None):
         "capture_system_keys": values["CAPTURE_SYS_KEYS"] == "yes",
         "natural_scroll": values["NATURAL_SCROLL"] == "yes",
         "force_software": values["FORCE_SOFTWARE"] == "yes",
+        "update_channel": "beta" if values["UPDATE_CHANNEL"] == "beta" else "stable",
     }
 
 
@@ -247,6 +254,7 @@ def setting_updates(args):
         "autoconnect_host", "autoconnect_app", "window_mode", "resolution",
         "fps", "bitrate", "audio_channels", "host_audio",
         "capture_system_keys", "natural_scroll", "force_software",
+        "update_channel",
     }
     unknown = set(changes) - allowed
     if unknown:
@@ -297,6 +305,10 @@ def setting_updates(args):
                 "force_software": "FORCE_SOFTWARE",
             }[key]
             updates[disk_key] = "yes" if value else "no"
+        elif key == "update_channel":
+            if value not in ("stable", "beta"):
+                raise Error(E_BAD_REQUEST, "update_channel must be stable or beta")
+            updates["UPDATE_CHANNEL"] = value
     return updates
 
 
@@ -1390,51 +1402,146 @@ def recover_usb_sessions():
 # ----------------------------------------------------------- read-only disk --
 
 def disk_backing_info():
-    """Return the installed system disk without accepting a caller path."""
+    """Resolve the mounted root to an LVM LV that supports a real snapshot."""
     source, err = run(["findmnt", "--noheadings", "--output", "SOURCE", "--target", "/"])
     if source is None:
         raise Error(E_UNAVAILABLE, err)
     source = source.strip()
-    if not re.fullmatch(r"/dev/[A-Za-z0-9._+-]+", source):
-        raise Error(E_UNAVAILABLE, "the running root filesystem is not on an exportable disk")
+    if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", source):
+        raise Error(E_UNAVAILABLE, "the running root filesystem is not on an exportable volume")
 
-    parent, err = run(["lsblk", "--noheadings", "--output", "PKNAME", source])
-    if parent is None:
-        raise Error(E_UNAVAILABLE, err)
-    parent = parent.strip()
-    if not re.fullmatch(r"[A-Za-z0-9._+-]+", parent):
-        raise Error(E_UNAVAILABLE, "could not identify the system disk")
-    device = "/dev/" + parent
+    out, err = run([
+        "lvs", "--noheadings", "--readonly", "--separator", "|",
+        "--units", "b", "--nosuffix", "--options",
+        "vg_name,lv_name,lv_path,lv_size,vg_free", source,
+    ])
+    if out is None:
+        raise Error(E_UNAVAILABLE,
+                    "this installation cannot create a safe live snapshot; reinstall with a current image")
+    fields = [field.strip() for field in out.strip().split("|")]
+    if len(fields) != 5:
+        raise Error(E_UNAVAILABLE,
+                    "this installation cannot create a safe live snapshot; reinstall with a current image")
+    vg_name, lv_name, device, size_text, free_text = fields
+    if not all(re.fullmatch(r"[A-Za-z0-9._+-]+", value) for value in (vg_name, lv_name)):
+        raise Error(E_FAILED, "LVM returned an invalid system volume")
+    if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", device):
+        raise Error(E_FAILED, "LVM returned an invalid system volume path")
     try:
         if not stat.S_ISBLK(os.stat(device).st_mode):
             raise Error(E_UNAVAILABLE, "the system disk is not a block device")
     except FileNotFoundError:
         raise Error(E_UNAVAILABLE, "the system disk disappeared")
 
-    size_text, err = run(["blockdev", "--getsize64", device])
-    if size_text is None:
-        raise Error(E_UNAVAILABLE, err)
     sector_text, err = run(["blockdev", "--getss", device])
     if sector_text is None:
         raise Error(E_UNAVAILABLE, err)
     try:
-        size = int(size_text.strip())
+        size = int(float(size_text.strip()))
+        vg_free = int(float(free_text.strip()))
         sector_size = int(sector_text.strip())
     except ValueError:
         raise Error(E_FAILED, "the system disk reported invalid geometry")
     if size <= 0 or size % 512 or sector_size not in (512, 4096):
         raise Error(E_FAILED, "the system disk geometry is unsupported")
-    return {"device": device, "size": size, "sector_size": sector_size}
+    minimum_cow = 512 * 1024 * 1024
+    desired_cow = max(2 * 1024 * 1024 * 1024, size // 5)
+    reserve = 256 * 1024 * 1024
+    cow_size = min(desired_cow, max(0, vg_free - reserve))
+    if cow_size < minimum_cow:
+        raise Error(E_UNAVAILABLE,
+                    "not enough reserved snapshot space; free at least 768 MiB in the Moonlight volume group")
+    return {"device": device, "root_source": source, "vg_name": vg_name,
+            "lv_name": lv_name, "size": size, "vg_free": vg_free,
+            "cow_size": cow_size, "sector_size": sector_size}
 
 
-def disk_target_remove():
-    """Remove only M9's fixed target/backstore/mapping, never unrelated LIO state."""
+def disk_session_journal(info=None):
+    if info is not None:
+        safe = {key: info[key] for key in (
+            "device", "root_source", "vg_name", "lv_name", "snapshot_lv",
+            "snapshot_path", "size", "sector_size", "cow_size", "iqn",
+            "username", "backend") if key in info}
+        write_text_atomic(DISK_SESSION_STATE, json.dumps(safe, sort_keys=True) + "\n", mode=0o600)
+        return safe
+    try:
+        with open(DISK_SESSION_STATE, "r", encoding="utf-8") as stream:
+            raw = stream.read().strip()
+        if raw == DISK_LEGACY_TARGET_IQN:
+            return {"iqn": raw, "backend": "legacy-dm"}
+        loaded = json.loads(raw)
+        return loaded if isinstance(loaded, dict) else {}
+    except (FileNotFoundError, OSError, ValueError):
+        return {}
+
+
+def disk_snapshot_status(info):
+    path = info.get("snapshot_path", "")
+    if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", path):
+        return {"state": "failed", "message": "snapshot identity is invalid"}
+    out, err = run([
+        # Do not pass lvs' --readonly metadata mode here: it deliberately
+        # skips live device-mapper status, leaving snap_percent empty. This is
+        # still a read-only query; the flag controls LVM's locking/status
+        # behavior rather than whether lvs mutates a volume.
+        "lvs", "--noheadings", "--separator", "|",
+        # M9 creates a conventional COW snapshot with --snapshot/--size, not
+        # a thin LV. Conventional utilization is snap_percent; data_percent
+        # is empty for this backend and would falsely mark a healthy target
+        # unavailable immediately after creation.
+        "--options", "snap_percent,lv_attr", path,
+    ], timeout=10)
+    if out is None:
+        return {"state": "failed", "message": err or "snapshot is unavailable"}
+    fields = [field.strip() for field in out.strip().split("|")]
+    if len(fields) != 2:
+        return {"state": "failed", "message": "snapshot health could not be read"}
+    percent_text, attributes = fields
+    if not attributes.startswith("s") or "I" in attributes:
+        return {"state": "overflow", "message": "snapshot copy-on-write storage is full"}
+    try:
+        percent = float(percent_text)
+    except ValueError:
+        return {"state": "failed", "message": "snapshot usage could not be read"}
+    if percent >= 100.0:
+        return {"state": "overflow", "message": "snapshot copy-on-write storage is full"}
+    capacity = info.get("cow_size", 0)
+    used = int(capacity * percent / 100.0)
+    return {"state": "ready", "cow_used": used, "cow_capacity": capacity}
+
+
+def disk_target_remove(info=None):
+    """Remove only the journalled M9 target and its exact snapshot LV."""
+    info = info or DISK_SESSION_INFO or disk_session_journal()
+    complete = disk_target_withdraw(info)
+    snapshot_path = info.get("snapshot_path", "")
+    if (info.get("backend") == "lvm" and
+            re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", snapshot_path)):
+        out, err = run(["lvremove", "--force", snapshot_path], timeout=30)
+        missing = (err or "").lower()
+        if out is None and not any(marker in missing for marker in (
+                "not found", "failed to find logical volume",
+                "unknown logical volume")):
+            log("could not remove the system disk snapshot: %s" % err)
+            complete = False
+    elif info.get("backend") == "legacy-dm":
+        for mapping in DISK_LEGACY_DM_NAMES:
+            out, err = run(["dmsetup", "remove", mapping], timeout=10)
+            if out is None and "not found" not in (err or "").lower():
+                log("could not remove legacy system disk mapping %s: %s" % (mapping, err))
+                complete = False
+    return complete
+
+
+def disk_target_withdraw(info):
+    """Stop new and existing initiator I/O while retaining snapshot state."""
     complete = True
     try:
         from rtslib_fb import RTSRoot
         root = RTSRoot()
+        expected_iqn = info.get("iqn", "")
         for target in list(root.targets):
-            if target.wwn == DISK_TARGET_IQN:
+            if expected_iqn and target.wwn == expected_iqn:
                 target.delete()
         for storage in list(root.storage_objects):
             if storage.name == DISK_BACKSTORE:
@@ -1442,31 +1549,94 @@ def disk_target_remove():
     except Exception as err:  # rtslib surfaces configfs errors through several types
         log("could not fully remove the system disk target: %s" % err)
         complete = False
-
-    # The mapping is exact and reserved to this helper. A busy failure is
-    # reported and left intact; it is never retried with a stronger primitive.
-    out, err = run(["dmsetup", "remove", DISK_DM_NAME], timeout=10)
-    if out is None and "not found" not in (err or "").lower():
-        log("could not remove the system disk mapping: %s" % err)
-        complete = False
     return complete
 
 
+def disk_snapshot_monitor(info):
+    """Withdraw the iSCSI target immediately if its COW area stops being safe."""
+    while True:
+        time.sleep(2)
+        with DISK_SESSION_LOCK:
+            if DISK_SESSION_INFO is not info or DISK_SESSION_REFS == 0:
+                return
+            status = disk_snapshot_status(info)
+            info["last_status"] = status
+            if status["state"] == "ready":
+                continue
+            log("withdrawing unsafe system disk export: %s" % status["message"])
+            disk_target_withdraw(info)
+            return
+
+
 def disk_target_create(info):
-    """Build two independent read-only barriers and a loopback-only LIO target."""
-    sectors = info["size"] // 512
-    table = "0 %d linear %s 0" % (sectors, info["device"])
-    out, err = run(["dmsetup", "create", DISK_DM_NAME, "--readonly", "--table", table], timeout=10)
+    """Freeze root briefly, create an LVM snapshot, and export that snapshot."""
+    # Use the conventional MiB form accepted by every supported LVM release,
+    # and report the actual whole-MiB COW capacity to status consumers.
+    cow_mib = info["cow_size"] // (1024 * 1024)
+    info["cow_size"] = cow_mib * 1024 * 1024
+    snapshot_lv = "session-snapshot-" + secrets.token_hex(6)
+    info["snapshot_lv"] = snapshot_lv
+    info["snapshot_path"] = "/dev/%s/%s" % (info["vg_name"], snapshot_lv)
+    info["backend"] = "lvm"
+    info["iqn"] = DISK_TARGET_IQN_PREFIX + secrets.token_hex(8)
+    info["username"] = "mlos" + secrets.token_hex(6)
+    info["password"] = secrets.token_hex(8)
+    disk_session_journal(info)
+
+    frozen = False
+    try:
+        out, err = run(["fsfreeze", "--freeze", "/"], timeout=15)
+        if out is None:
+            raise Error(E_UNAVAILABLE, "could not freeze the root filesystem: %s" % err)
+        frozen = True
+        out, err = run([
+            # The root filesystem is frozen, so LVM must not try to archive
+            # metadata below /etc/lvm before changing the VG: that write would
+            # deadlock on the freeze. The scoped helper journal is written
+            # before freezing and recovers this transient LV after a crash.
+            "lvcreate", "--config", "backup { backup=0 archive=0 }",
+            "--snapshot", "--yes", "--name", snapshot_lv,
+            "--size", "%dM" % cow_mib,
+            info["device"],
+        ], timeout=30)
+        if out is None:
+            raise Error(E_UNAVAILABLE, "could not create a stable root snapshot: %s" % err)
+    finally:
+        if frozen:
+            unfreeze_error = ""
+            for _ in range(3):
+                out, unfreeze_error = run(["fsfreeze", "--unfreeze", "/"], timeout=15)
+                if out is not None:
+                    break
+                time.sleep(0.2)
+            else:
+                log("URGENT: could not unfreeze the root filesystem: %s" % unfreeze_error)
+                raise Error(E_FAILED,
+                            "the root filesystem could not be unfrozen; reboot the appliance")
+
+    # The COW device now holds a stable point-in-time view, so the origin can
+    # be unfrozen before this metadata change. Withdraw user write access from
+    # the snapshot itself; LIO independently enforces read-only export access.
+    out, err = run([
+        "lvchange", "--permission", "r", info["snapshot_path"],
+    ], timeout=30)
     if out is None:
-        raise Error(E_UNAVAILABLE, err)
+        raise Error(E_UNAVAILABLE, "could not make the root snapshot read-only: %s" % err)
 
     try:
-        from rtslib_fb import BlockStorageObject, FabricModule, LUN, NetworkPortal, Target, TPG
+        from rtslib_fb import BlockStorageObject, FabricModule, LUN, NetworkPortal, Target, TPG, tcm as rtslib_tcm
+        # Debian's rtslib defaults to /var/run/rtslib_backstore.lock. The
+        # helper deliberately receives only its RuntimeDirectory as writable,
+        # so keep the process-local lock there instead of weakening the
+        # service sandbox by opening all of /run.
+        rtslib_tcm.lock_file = DISK_RTSLIB_LOCK
         storage = BlockStorageObject(
-            DISK_BACKSTORE, "/dev/mapper/" + DISK_DM_NAME, readonly=True)
-        target = Target(FabricModule("iscsi"), DISK_TARGET_IQN)
+            DISK_BACKSTORE, info["snapshot_path"], readonly=True)
+        target = Target(FabricModule("iscsi"), info["iqn"])
         tpg = TPG(target, mode="create")
-        tpg.set_attribute("authentication", "0")
+        tpg.set_attribute("authentication", "1")
+        tpg.chap_userid = info["username"]
+        tpg.chap_password = info["password"]
         NetworkPortal(tpg, "127.0.0.1", DISK_PORT)
         LUN(tpg, storage_object=storage)
         tpg.enable = True
@@ -1474,9 +1644,9 @@ def disk_target_create(info):
         raise Error(E_UNAVAILABLE, "could not create the read-only disk target: %s" % err)
 
 
-def persist_disk_session(active):
+def persist_disk_session(active, info=None):
     if active:
-        write_text_atomic(DISK_SESSION_STATE, DISK_TARGET_IQN + "\n", mode=0o600)
+        disk_session_journal(info or DISK_SESSION_INFO or {})
         return
     try:
         os.unlink(DISK_SESSION_STATE)
@@ -1501,8 +1671,8 @@ def op_disk_session_acquire(args, emit, owned):
                     persist_disk_session(False)
                 info = disk_backing_info()
                 # Journal first so a killed helper recovers even if it dies
-                # halfway through device-mapper or configfs construction.
-                persist_disk_session(True)
+                # halfway through LVM snapshot or configfs construction.
+                persist_disk_session(True, info)
                 try:
                     disk_target_create(info)
                 except Exception:
@@ -1510,15 +1680,27 @@ def op_disk_session_acquire(args, emit, owned):
                         persist_disk_session(False)
                     raise
                 DISK_SESSION_INFO = info
+                threading.Thread(target=disk_snapshot_monitor, args=(info,),
+                                 name="disk-snapshot-monitor", daemon=True).start()
             DISK_SESSION_REFS += 1
             owned[0] = True
 
         info = DISK_SESSION_INFO
+        snapshot = disk_snapshot_status(info)
+        if snapshot["state"] != "ready":
+            disk_target_withdraw(info)
+            raise Error(E_UNAVAILABLE, snapshot["message"])
         return {
-            "iqn": DISK_TARGET_IQN,
+            "iqn": info["iqn"],
             "size": info["size"],
             "sector_size": info["sector_size"],
             "readonly": True,
+            "snapshot": True,
+            "snapshot_state": snapshot["state"],
+            "cow_used": snapshot["cow_used"],
+            "cow_capacity": snapshot["cow_capacity"],
+            "username": info["username"],
+            "password": info["password"],
         }
 
 
@@ -1547,6 +1729,26 @@ def recover_disk_session():
         persist_disk_session(False)
     else:
         log("stale system disk session remains journalled for the next recovery attempt")
+
+
+def op_disk_status(args, emit):
+    """Report snapshot state without acquiring an export lease or exposing credentials."""
+    del emit
+    if args:
+        raise Error(E_BAD_REQUEST, "disk.status takes no arguments")
+    with DISK_SESSION_LOCK:
+        if DISK_SESSION_REFS == 0 or DISK_SESSION_INFO is None:
+            return {"active": False, "state": "idle"}
+        status = disk_snapshot_status(DISK_SESSION_INFO)
+        return {
+            "active": True,
+            "state": status["state"],
+            "size": DISK_SESSION_INFO["size"],
+            "readonly": True,
+            "snapshot": True,
+            "cow_used": status.get("cow_used", 0),
+            "cow_capacity": status.get("cow_capacity", 0),
+        }
 
 
 def op_usb_share(args, emit):
@@ -2029,6 +2231,10 @@ def op_system_power(args, emit):
     action = args.get("action")
     if action not in ("reboot", "poweroff"):
         raise Error(E_BAD_REQUEST, "action must be reboot or poweroff")
+    with DISK_SESSION_LOCK:
+        if DISK_SESSION_REFS:
+            raise Error(E_UNAVAILABLE,
+                        "disconnect the stream and wait for the shared system disk to detach first")
 
     emit("Shutting down..." if action == "poweroff" else "Rebooting...")
 
@@ -2268,6 +2474,10 @@ def op_backup_save(args, emit):
 
 
 def op_backup_restore(args, emit):
+    with DISK_SESSION_LOCK:
+        if DISK_SESSION_REFS:
+            raise Error(E_UNAVAILABLE,
+                        "disconnect the stream and wait for the shared system disk to detach first")
     archive = clean_text(args.get("archive"), "archive", 768, empty=False)
     archive = os.path.realpath(archive)
     choices = {item["path"] for item in backup_archives() if item["valid"]}
@@ -2369,6 +2579,7 @@ OPS = {
     "usb.unshare": op_usb_unshare,
     "usb.handback": op_usb_handback,
     "usb.autoshare": op_usb_autoshare,
+    "disk.status": op_disk_status,
     "system.health": op_system_health,
     "system.context": op_system_context,
     "setup.status": op_setup_status,
@@ -2396,7 +2607,7 @@ OPS = {
 # machine is deliberately absent.
 READ_ONLY = ("ping", "status", "settings.status", "display.status", "audio.status", "wifi.list", "wifi.saved",
              "tailscale.status", "bluetooth.status", "usb.list", "system.health", "system.context", "ssh.status",
-             "battery.status", "region.status", "backup.status", "install.status", "setup.status")
+             "battery.status", "region.status", "backup.status", "install.status", "setup.status", "disk.status")
 
 
 # ------------------------------------------------------------------- serving --

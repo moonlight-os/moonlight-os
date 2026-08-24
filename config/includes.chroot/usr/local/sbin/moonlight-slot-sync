@@ -10,9 +10,12 @@ case "$root_label" in
 	*) exit 0 ;;
 esac
 
-parent=$(lsblk -ndo PKNAME "$ROOT_DEV" 2>/dev/null | head -1)
-[ -n "$parent" ] || exit 1
-disk=/dev/$parent
+# A mounted LVM root resolves to /dev/dm-N. Asking that device for a direct
+# PKNAME returns nothing because its immediate parent is a partition. Walk the
+# complete ancestry and select the containing physical disk instead.
+disk=$(lsblk -srnpo NAME,TYPE "$ROOT_DEV" 2>/dev/null \
+	| awk '$2 == "disk" { print $1; exit }')
+[ -b "$disk" ] || exit 1
 
 find_on_disk() {
 	lsblk -lnpo NAME,LABEL "$disk" 2>/dev/null \

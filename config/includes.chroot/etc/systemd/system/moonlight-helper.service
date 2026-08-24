@@ -31,6 +31,11 @@ ReadWritePaths=/run/moonlight-os /var/lib/moonlight-os /etc/moonlight-os /etc/sw
 # Configfs remains read-only to every other service and the target binds only
 # to 127.0.0.1; Helios reaches it through the authenticated stream tunnel.
 ReadWritePaths=-/sys/kernel/config/target
+# LVM needs its private runtime/lock trees even for discovery, and writes an
+# archive plus a current metadata backup when the connection-owned snapshot is
+# created or removed. Keep these narrow paths writable without opening the
+# rest of /run or /etc to the helper.
+ReadWritePaths=-/run/lvm -/run/lock/lvm -/etc/lvm/archive -/etc/lvm/backup
 # Backups are written only to helper-discovered mounted removable roots.
 ReadWritePaths=-/media -/run/media -/mnt -/run/live/medium
 # Restore has its own archive allow-list and may replace only the settings

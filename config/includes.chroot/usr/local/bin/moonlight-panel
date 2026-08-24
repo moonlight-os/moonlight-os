@@ -173,7 +173,11 @@ trap restore EXIT INT TERM HUP
 # turned into a general shell launcher, and the same lock/workspace cleanup
 # above still wraps every workflow.
 case "${MLOS_PANEL_COMMAND:-menu}" in
-	install) set -- sudo -n /usr/local/bin/moonlight-install ;;
+	install) if [ -n "${MLOS_INSTALL_DEVICE:-}" ]; then
+			set -- sudo -n --preserve-env=MLOS_INSTALL_DEVICE /usr/local/bin/moonlight-install
+		 else
+			set -- sudo -n /usr/local/bin/moonlight-install
+		 fi ;;
 	persist) set -- sudo -n /usr/local/bin/moonlight-persist ;;
 	update)  set -- sudo -n /usr/local/sbin/moonlight-update --menu ;;
 	ssh)     set -- sudo -n /usr/local/bin/moonlight-ssh ;;

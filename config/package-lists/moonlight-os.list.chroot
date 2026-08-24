@@ -206,8 +206,8 @@ rsync
 curl
 openssl
 squashfs-tools
-# Session-owned, loopback-only read-only export of the running system disk.
-dmsetup
+# Session-owned, loopback-only export of a stable read-only LVM snapshot.
+lvm2
 targetcli-fb
 python3-rtslib-fb
 # grub-*-bin only: the -bin packages carry the platform modules and

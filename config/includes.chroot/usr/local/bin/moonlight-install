@@ -2,8 +2,9 @@
 # Install Moonlight OS to an internal disk.
 #
 # Deliberately not debian-installer: this is a single-purpose appliance with
-# one partition layout and no choices worth asking about. It creates two root
-# slots around a shared /boot, copies the running system into slot A, drops the
+# one partition layout and no choices worth asking about. It creates two LVM
+# root slots plus reserved snapshot space around a shared /boot, copies the
+# running system into slot A, drops the
 # live-boot machinery, and installs GRUB for both UEFI and BIOS. Slot B is kept
 # empty for the first signed, rollback-safe update.
 #
@@ -51,7 +52,7 @@ pick_disk() {
 	# emulated floppies and card-reader slots otherwise show up as install
 	# targets.  The image is about 3 GB unpacked.
 	lsblk -dnp -b -o NAME,SIZE,TYPE,MODEL 2>/dev/null \
-		| awk '$3 == "disk" && $2 >= 20000000000 {
+		| awk '$3 == "disk" && $2 >= 24000000000 {
 			size = $2 / 1000000000
 			printf "%s\t%.1f GB\t", $1, size
 			out = ""
@@ -223,6 +224,40 @@ harvest_settings() {
 	return 0
 }
 
+deactivate_target_vgs() {
+	target="$1"
+	# Reinstalling over Moonlight OS leaves its LVs active after settings were
+	# inspected. An active device-mapper child keeps pvcreate from replacing the
+	# old PV even after the partition table is rewritten. Inspect only the
+	# selected disk and its partitions, then deactivate exactly the VGs backed
+	# by those devices before the first destructive write.
+	old_vgs=$(
+		for candidate in $(lsblk -lnpo NAME,TYPE "$target" 2>/dev/null \
+				| awk '$2 == "disk" || $2 == "part" { print $1 }'); do
+			mlos_root pvs --noheadings -o vg_name "$candidate" 2>/dev/null \
+					| awk '{$1=$1; if (NF) print}'
+		done | sort -u
+	)
+	for old_vg in $old_vgs; do
+		mlos_root vgchange --activate n "$old_vg" >/dev/null 2>&1 \
+			|| return 1
+	done
+	mlos_root udevadm settle
+}
+
+wipe_target_partition_signatures() {
+	target="$1"
+	# Removing only the disk's partition table leaves an LVM label at the same
+	# offset inside a recreated partition. udev can then auto-activate the old
+	# VG again between partprobe and pvcreate. Clear signatures from the selected
+	# disk's existing partitions while its VGs are inactive, before rewriting the
+	# table. This runs only after both explicit erase confirmations.
+	for candidate in $(lsblk -lnpo NAME,TYPE "$target" 2>/dev/null \
+			| awk '$2 == "part" { print $1 }'); do
+		mlos_root wipefs -a "$candidate" >/dev/null 2>&1 || return 1
+	done
+}
+
 main() {
 	if [ ! -d /run/live/medium ]; then
 		mlos_msg "Moonlight OS is already installed on this machine."
@@ -264,23 +299,27 @@ This cannot be undone. Continue?" 20 76 || exit 0
 
 	# ---- partition ----------------------------------------------------
 	printf '  [1/6] Partitioning...\n'
+	deactivate_target_vgs "$disk" \
+		|| die_ui "The existing Moonlight OS volumes are still in use. Reboot and try the installation again. Nothing was overwritten."
+	wipe_target_partition_signatures "$disk" \
+		|| die_ui "Could not clear the existing signatures on the selected disk."
 	mlos_root wipefs -a "$disk" >/dev/null 2>&1 || true
 	mlos_root sgdisk --zap-all "$disk" >/dev/null 2>&1 || true
-	# 1 MiB BIOS boot + 512 MiB ESP + 1 GiB shared /boot + equal A/B roots.
+	# 1 MiB BIOS boot + 512 MiB ESP + 1 GiB shared /boot + one LVM PV.
 	# The shared boot partition keeps both slot kernels available while either
-	# root is being replaced. Both firmware partitions are always created so
-	# the disk works in either UEFI or BIOS mode.
+	# root LV is being replaced. 86% of the VG is split between A/B; the rest is
+	# deliberately reserved for stable live snapshots. Both firmware partitions
+	# are always created so the disk works in either UEFI or BIOS mode.
 	disk_bytes=$(mlos_root blockdev --getsize64 "$disk")
 	usable_mib=$((disk_bytes / 1048576 - 1537))
-	root_mib=$((usable_mib / 2))
+	root_mib=$((usable_mib * 43 / 100))
 	[ "$root_mib" -ge 8000 ] \
-		|| die_ui "This disk is too small for rollback-safe A/B updates. Moonlight OS needs at least 20 GB."
+		|| die_ui "This disk is too small for rollback-safe A/B updates and live snapshots. Moonlight OS needs at least 24 GB."
 	mlos_root sgdisk \
 		-n 1:0:+1M    -t 1:ef02 -c 1:"BIOS boot" \
 		-n 2:0:+512M  -t 2:ef00 -c 2:"EFI system" \
 		-n 3:0:+1G    -t 3:8300 -c 3:"Moonlight boot" \
-		-n 4:0:+${root_mib}M -t 4:8300 -c 4:"Moonlight OS A" \
-		-n 5:0:0      -t 5:8300 -c 5:"Moonlight OS B" \
+		-n 4:0:0      -t 4:8e00 -c 4:"Moonlight OS volumes" \
 		"$disk" >/dev/null 2>&1 || die_ui "Partitioning failed."
 	mlos_root partprobe "$disk" >/dev/null 2>&1 || true
 	sleep 2
@@ -292,8 +331,24 @@ This cannot be undone. Continue?" 20 76 || exit 0
 	esac
 	esp="${p}2"
 	boot="${p}3"
-	root_a="${p}4"
-	root_b="${p}5"
+	root_pv="${p}4"
+	vg_name="moonlight-$(mlos_root cat /proc/sys/kernel/random/uuid | cut -c1-8)"
+	[ -b "$esp" ] && [ -b "$boot" ] && [ -b "$root_pv" ] \
+		|| die_ui "The new partitions did not appear."
+	# The old PV label can still name its now-inactive VG after a reinstall.
+	# LVM deliberately requires -ff for that case; the whole selected disk has
+	# already passed both erase confirmations and was repartitioned above.
+	mlos_root pvcreate --force --force --yes "$root_pv" >/dev/null 2>&1 \
+		|| die_ui "Could not prepare the Moonlight OS volume container."
+	mlos_root vgcreate "$vg_name" "$root_pv" >/dev/null 2>&1 \
+		|| die_ui "Could not create the Moonlight OS volume group."
+	mlos_root lvcreate --yes --extents 43%VG --name root-a "$vg_name" >/dev/null 2>&1 \
+		|| die_ui "Could not create system slot A."
+	mlos_root lvcreate --yes --extents 43%VG --name root-b "$vg_name" >/dev/null 2>&1 \
+		|| die_ui "Could not create system slot B."
+	mlos_root udevadm settle
+	root_a="/dev/$vg_name/root-a"
+	root_b="/dev/$vg_name/root-b"
 	root="$root_a"
 	[ -b "$esp" ] && [ -b "$boot" ] && [ -b "$root_a" ] \
 		&& [ -b "$root_b" ] || die_ui "The new partitions did not appear."

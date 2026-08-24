@@ -1,0 +1,19 @@
+[connection]
+id=Moonlight wired
+uuid=606a2fa6-0ed2-4a77-9f29-f4af0e73bfa8
+type=ethernet
+autoconnect=true
+autoconnect-priority=100
+autoconnect-retries=0
+
+[ethernet]
+
+[ipv4]
+method=auto
+may-fail=false
+
+[ipv6]
+method=auto
+may-fail=true
+
+[proxy]

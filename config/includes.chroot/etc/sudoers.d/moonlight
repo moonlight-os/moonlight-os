@@ -1,6 +1,10 @@
 # Fixed appliance workflows. Each script validates its own choices and none
 # accepts a command string. The console still needs no password, but it no
 # longer receives an unrestricted root shell through sudo.
+# The native control centre passes only its selected install block device.
+# moonlight-install independently rebuilds its eligible-device inventory and
+# rejects stale, undersized, or live-media targets before writing anything.
+Defaults:moonlight env_keep += "MLOS_INSTALL_DEVICE"
 Cmnd_Alias MLOS_WORKFLOWS = /usr/local/bin/moonlight-install "", \
     /usr/local/bin/moonlight-persist "", \
     /usr/local/bin/moonlight-ssh "", \
