@@ -1,0 +1,8 @@
+[Unit]
+Description=Send anonymous Moonlight OS daily launch telemetry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/moonlight-os/telemetry launch

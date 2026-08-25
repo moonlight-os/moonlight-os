@@ -18,6 +18,7 @@
 #                              auto takes ~/.ssh/*.pub from this machine.
 #   MLOS_SUITE=trixie          Debian release to base on
 #   MLOS_VERSION=0.2.0         OS release version written into the image
+#   TELEMETRY_URL=https://...  HTTPS base URL compiled into telemetry clients
 #   INCREMENTAL=1              reuse the existing chroot (fast, but silently
 #                              ignores any config change -- debugging only)
 
@@ -26,6 +27,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE=moonlight-os-builder
 MLOS_VERSION="${MLOS_VERSION:-0~dev}"
+TELEMETRY_URL="${TELEMETRY_URL:-}"
 FIRMWARE="${FIRMWARE:-full}"
 MLOS_SUITE="${MLOS_SUITE:-trixie}"
 TAILSCALE_VERSION="${TAILSCALE_VERSION:-}"
@@ -130,7 +132,7 @@ fetch_selene() {
 	say "Building the Selene package from $SELENE_SRC"
 	# build-deb.sh does its work in a Debian container of the same suite, so
 	# the package matches the image regardless of what this machine runs.
-	MLOS_SUITE="$MLOS_SUITE" "$SELENE_SRC/scripts/build-deb.sh" \
+	MLOS_SUITE="$MLOS_SUITE" TELEMETRY_URL="$TELEMETRY_URL" "$SELENE_SRC/scripts/build-deb.sh" \
 		|| die "Selene package build failed"
 
 	rm -f "$dest"/selene_*.deb
@@ -251,6 +253,17 @@ stage_release() {
 	say "Moonlight OS release: $version ($revision)"
 }
 
+stage_telemetry_url() {
+	case "$TELEMETRY_URL" in
+		"") ;;
+		https://*) ;;
+		*) die "TELEMETRY_URL must be empty or use HTTPS." ;;
+	esac
+	local dest="$HERE/config/includes.chroot/usr/share/moonlight-os/telemetry-url"
+	mkdir -p "$(dirname "$dest")"
+	printf '%s\n' "$TELEMETRY_URL" > "$dest"
+}
+
 # ----------------------------------------------------------------- build ----
 do_build() {
 	build_builder_image
@@ -258,6 +271,7 @@ do_build() {
 	fetch_tailscale
 	stage_ssh_keys
 	stage_release
+	stage_telemetry_url
 
 	local pkglist="config/package-lists/moonlight-os.list.chroot"
 	if [[ "$FIRMWARE" == "slim" ]]; then

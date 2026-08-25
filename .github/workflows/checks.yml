@@ -48,7 +48,8 @@ jobs:
             config/includes.chroot/etc/grub.d/09_moonlight_slots \
             config/hooks/normal/0050-moonlight-updater.hook.chroot \
             tools/format-iso-version.sh \
-            tools/render-update-manifest.sh
+            tools/render-update-manifest.sh \
+            config/includes.chroot/usr/local/lib/moonlight-os/telemetry
       - name: Sudo policy has no unrestricted rule
         run: |
           ! grep -Eq "NOPASSWD:[[:space:]]*(ALL|/bin/(ba)?sh)" config/includes.chroot/etc/sudoers.d/moonlight

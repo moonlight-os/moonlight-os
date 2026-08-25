@@ -12,7 +12,7 @@ on:
         default: '0~dev'
       selene_ref:
         description: 'Compatible Selene ref (must provide setup and panel actions)'
-        default: 'v6.2.1'
+        default: 'v6.3.0-beta.3'
       firmware:
         description: 'full keeps every blob, slim drops ~400 MB'
         type: choice
@@ -99,7 +99,7 @@ jobs:
           repository: moonlight-os/selene
           # Pin the compatible appliance client. Selene main does not yet
           # provide the setup/panel commands the session calls at boot.
-          ref: ${{ inputs.selene_ref || 'v6.2.1' }}
+          ref: ${{ inputs.selene_ref || 'v6.3.0-beta.3' }}
           submodules: recursive
           path: selene
 
@@ -109,6 +109,7 @@ jobs:
           FIRMWARE: ${{ inputs.firmware || 'full' }}
           SSH_KEYS: ${{ steps.ssh.outputs.arg }}
           SELENE_SRC: ${{ github.workspace }}/selene
+          TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
         run: ./build.sh
 
       - name: Describe the image

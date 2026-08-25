@@ -47,6 +47,7 @@
 # Generated for each image so the installed updater can compare releases.
 /config/includes.chroot/etc/moonlight-os/release
 /config/includes.chroot/usr/share/moonlight-os/release
+/config/includes.chroot/usr/share/moonlight-os/telemetry-url
 
 # --- host utils ---------------------------------------------------------
 /host-utils/dist/

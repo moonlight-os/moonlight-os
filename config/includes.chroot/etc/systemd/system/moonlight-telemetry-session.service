@@ -1,0 +1,13 @@
+[Unit]
+Description=Moonlight OS anonymous telemetry session marker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/moonlight-os/telemetry session-start
+ExecStop=/usr/local/lib/moonlight-os/telemetry session-stop
+
+[Install]
+WantedBy=multi-user.target

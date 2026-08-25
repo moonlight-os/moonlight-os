@@ -1,0 +1,79 @@
+#!/bin/sh
+set -eu
+
+settings=/etc/moonlight-os/moonlight-os.conf
+endpoint_file=/usr/share/moonlight-os/telemetry-url
+state_dir=/var/lib/moonlight-os
+state_file=$state_dir/telemetry-state
+
+[ -r "$settings" ] && . "$settings"
+TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-yes}
+CRASH_REPORTING_ENABLED=${CRASH_REPORTING_ENABLED:-yes}
+
+[ -r "$endpoint_file" ] || exit 0
+endpoint=$(sed -n '1p' "$endpoint_file")
+case "$endpoint" in
+	https://*) ;;
+	*) exit 0 ;;
+esac
+endpoint=${endpoint%/}/api/v1/events
+
+version=$(sed -n 's/^VERSION=//p' /usr/share/moonlight-os/release 2>/dev/null | head -1)
+[ -n "$version" ] || version=unknown
+arch=$(uname -m)
+case "$arch" in
+	x86_64) arch=amd64 ;;
+	aarch64) arch=arm64 ;;
+esac
+today=$(date -u +%F)
+
+running=no
+last_launch=
+if [ -r "$state_file" ]; then
+	running=$(sed -n 's/^RUNNING=//p' "$state_file" | head -1)
+	last_launch=$(sed -n 's/^LAST_LAUNCH=//p' "$state_file" | head -1)
+fi
+
+write_state() {
+	install -d -m 0750 "$state_dir"
+	printf 'RUNNING=%s\nLAST_LAUNCH=%s\n' "$running" "$last_launch" > "$state_file"
+	chmod 0640 "$state_file"
+}
+
+post() {
+	curl --silent --show-error --fail --max-time 5 \
+		--proto '=https' --tlsv1.2 \
+		-H 'Content-Type: application/json' \
+		--data-binary "$1" "$endpoint" >/dev/null 2>&1 || true
+}
+
+send_launch() {
+	[ "$TELEMETRY_ENABLED" = yes ] || return 0
+	[ "$last_launch" != "$today" ] || return 0
+	last_launch=$today
+	write_state
+	post "{\"project\":\"moonlight-os\",\"version\":\"$version\",\"os\":\"linux\",\"arch\":\"$arch\",\"kind\":\"launch\"}"
+}
+
+case "${1:-}" in
+	session-start)
+		previous_running=$running
+		if [ "$CRASH_REPORTING_ENABLED" = yes ]; then running=yes; else running=no; fi
+		write_state
+		if [ "$CRASH_REPORTING_ENABLED" = yes ] && [ "$previous_running" = yes ]; then
+			post "{\"project\":\"moonlight-os\",\"version\":\"$version\",\"os\":\"linux\",\"arch\":\"$arch\",\"kind\":\"crash\",\"crash\":{\"reason\":\"unclean-exit\"}}"
+		fi
+		send_launch
+		;;
+	session-stop)
+		running=no
+		write_state
+		;;
+	launch)
+		send_launch
+		;;
+	*)
+		echo "usage: telemetry {session-start|session-stop|launch}" >&2
+		exit 2
+		;;
+esac

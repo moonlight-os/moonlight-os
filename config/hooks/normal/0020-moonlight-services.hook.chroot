@@ -19,6 +19,7 @@ done
 # rather than by a package because, like everything in this image, it is a
 # file dropped into includes.chroot with no postinst to do it.
 systemctl enable moonlight-helper 2>/dev/null || true
+systemctl enable moonlight-telemetry-session moonlight-telemetry-report.timer 2>/dev/null || true
 
 # Tailscale comes from the upstream tarball, so its unit is dropped into
 # /etc/systemd/system by build.sh rather than installed by a package -- it
