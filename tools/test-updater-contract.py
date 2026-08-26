@@ -79,9 +79,14 @@ assert '--prerelease' in workflow
 assert "MLOS_UPDATE_SIGNING_KEY" in workflow
 assert os.stat(updater_path).st_mode & 0o111
 assert os.stat(ROOT / "tools/test-updater-channel.py").st_mode & 0o111
+assert os.stat(ROOT / "tools/test-updater-kernel-handoff.py").st_mode & 0o111
 assert os.stat(ROOT / "tools/render-update-manifest.sh").st_mode & 0o111
 assert os.stat(grub_path).st_mode & 0o111
 assert os.stat(slot_sync_path).st_mode & 0o111
+assert os.stat(
+    ROOT
+    / "config/includes.chroot/etc/initramfs/post-update.d/zz-moonlight-kernel-handoff"
+).st_mode & 0o111
 
 public_key = ROOT / "config/includes.chroot/usr/share/moonlight-os/update.pub"
 subprocess.run(

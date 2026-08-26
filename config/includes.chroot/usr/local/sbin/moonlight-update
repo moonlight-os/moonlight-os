@@ -355,6 +355,15 @@ prepare_target() {
 		"$SOURCE_MOUNT/" "$TARGET/" \
 		|| die "Copying the new system into the inactive slot failed."
 
+	kernel_version=$(find "$TARGET/lib/modules" -mindepth 1 -maxdepth 1 -type d \
+		-printf '%f\n' | sort -V | tail -1)
+	[ -n "$kernel_version" ] \
+		&& [ -f "$SOURCE_MOUNT/boot/vmlinuz-$kernel_version" ] \
+		|| die "The verified image has no kernel matching its modules. The current slot is still the default."
+	install -m 0644 "$SOURCE_MOUNT/boot/vmlinuz-$kernel_version" \
+		"/boot/vmlinuz-$kernel_version.new"
+	mv "/boot/vmlinuz-$kernel_version.new" "/boot/vmlinuz-$kernel_version"
+
 	bind_target
 	moonlight-backup --restore-to "$TARGET" "$backup" \
 		|| die "The new system was copied, but your settings could not be restored. The current slot is still the default."
@@ -375,8 +384,6 @@ prepare_target() {
 		update-initramfs -u -k all >/dev/null
 	CHROOT
 
-	kernel_version=$(find "$TARGET/lib/modules" -mindepth 1 -maxdepth 1 -type d \
-		-printf '%f\n' | sort -V | tail -1)
 	[ -n "$kernel_version" ] \
 		&& [ -f "/boot/vmlinuz-$kernel_version" ] \
 		&& [ -f "/boot/initrd.img-$kernel_version" ] \

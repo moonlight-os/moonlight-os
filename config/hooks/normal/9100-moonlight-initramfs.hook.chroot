@@ -11,9 +11,22 @@
 # initramfs should also reflect.
 set -e
 
-chmod +x /etc/initramfs-tools/hooks/zz-moonlight-trim-gpu
+chmod +x /etc/initramfs-tools/hooks/zz-moonlight-trim-gpu \
+	/etc/initramfs/post-update.d/zz-moonlight-kernel-handoff
 
 before=$(du -sk /boot/initrd.img-* 2>/dev/null | sort -n | tail -1 | cut -f1)
 update-initramfs -u -k all
 after=$(du -sk /boot/initrd.img-* 2>/dev/null | sort -n | tail -1 | cut -f1)
 echo "I: initramfs ${before:-?} kB -> ${after:-?} kB"
+
+# Installed releases before 0.2.8-beta.4 deliberately excluded /boot while
+# copying an update into the inactive slot. That worked only while the kernel
+# version stayed unchanged. Keep one kernel copy in the root filesystem so
+# the new slot's post-update hook can hand it to the shared boot partition
+# even when the update is being driven by an older updater.
+kernel_version=$(find /lib/modules -mindepth 1 -maxdepth 1 -type d \
+	-printf '%f\n' | sort -V | tail -1)
+[ -n "$kernel_version" ] && [ -f "/boot/vmlinuz-$kernel_version" ]
+install -d -m 0755 /usr/lib/moonlight-os/boot-payload
+install -m 0644 "/boot/vmlinuz-$kernel_version" \
+	"/usr/lib/moonlight-os/boot-payload/vmlinuz-$kernel_version"

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Bootstrap kernel handoff for updates driven by pre-0.2.8-beta.4 systems.
+set -eu
+
+version=${1:-}
+case "$version" in
+	''|*[!0-9A-Za-z._+~-]*) exit 0 ;;
+esac
+
+payload_dir=${MOONLIGHT_KERNEL_PAYLOAD_DIR:-/usr/lib/moonlight-os/boot-payload}
+boot_dir=${MOONLIGHT_KERNEL_BOOT_DIR:-/boot}
+payload=$payload_dir/vmlinuz-$version
+[ -f "$payload" ] || exit 0
+
+install -d -m 0755 "$boot_dir"
+install -m 0644 "$payload" "$boot_dir/vmlinuz-$version.new"
+mv "$boot_dir/vmlinuz-$version.new" "$boot_dir/vmlinuz-$version"

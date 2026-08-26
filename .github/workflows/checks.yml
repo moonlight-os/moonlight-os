@@ -23,6 +23,7 @@ jobs:
           done
           python3 tools/test-updater-contract.py
           python3 tools/test-updater-channel.py
+          python3 tools/test-updater-kernel-handoff.py
           python3 tools/test-update-manifest.py
           python3 tools/test-version-branding.py
           python3 tools/test-session-contract.py
@@ -46,7 +47,9 @@ jobs:
             config/includes.chroot/usr/local/sbin/moonlight-update \
             config/includes.chroot/usr/local/sbin/moonlight-slot-sync \
             config/includes.chroot/etc/grub.d/09_moonlight_slots \
+            config/includes.chroot/etc/initramfs/post-update.d/zz-moonlight-kernel-handoff \
             config/hooks/normal/0050-moonlight-updater.hook.chroot \
+            config/hooks/normal/9100-moonlight-initramfs.hook.chroot \
             tools/format-iso-version.sh \
             tools/render-update-manifest.sh \
             config/includes.chroot/usr/local/lib/moonlight-os/telemetry
