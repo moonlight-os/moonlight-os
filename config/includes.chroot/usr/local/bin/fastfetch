@@ -1,0 +1,13 @@
+#!/bin/sh
+# Use Moonlight OS's current branding for the default Fastfetch view.  An
+# explicit config option still lets users select their own configuration.
+
+for argument in "$@"; do
+	case "$argument" in
+		-c|--config|--config=*)
+			exec /usr/bin/fastfetch "$@"
+			;;
+	esac
+done
+
+exec /usr/bin/fastfetch --config /etc/fastfetch/config.jsonc "$@"
