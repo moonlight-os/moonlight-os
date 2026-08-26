@@ -2,16 +2,28 @@
 # Bootstrap kernel handoff for updates driven by pre-0.2.8-beta.4 systems.
 set -eu
 
-version=${1:-}
-case "$version" in
-	''|*[!0-9A-Za-z._+~-]*) exit 0 ;;
-esac
-
 payload_dir=${MOONLIGHT_KERNEL_PAYLOAD_DIR:-/usr/lib/moonlight-os/boot-payload}
 boot_dir=${MOONLIGHT_KERNEL_BOOT_DIR:-/boot}
-payload=$payload_dir/vmlinuz-$version
-[ -f "$payload" ] || exit 0
+modules_dir=${MOONLIGHT_KERNEL_MODULES_DIR:-/lib/modules}
+mkinitramfs=${MOONLIGHT_MKINITRAMFS:-/usr/sbin/mkinitramfs}
 
-install -d -m 0755 "$boot_dir"
-install -m 0644 "$payload" "$boot_dir/vmlinuz-$version.new"
-mv "$boot_dir/vmlinuz-$version.new" "$boot_dir/vmlinuz-$version"
+# update-initramfs -u -k all only visits versions that already have an initrd
+# on /boot. An older slot therefore invokes this hook for its own kernel, not
+# for the new root's kernel. Scan the image-owned payloads instead of trusting
+# the hook argument so a kernel-changing update can bootstrap itself.
+for payload in "$payload_dir"/vmlinuz-*; do
+	[ -f "$payload" ] || continue
+	version=${payload##*/vmlinuz-}
+	case "$version" in
+		''|*[!0-9A-Za-z._+~-]*) continue ;;
+	esac
+	[ -d "$modules_dir/$version" ] || continue
+
+	install -d -m 0755 "$boot_dir"
+	install -m 0644 "$payload" "$boot_dir/vmlinuz-$version.new"
+	mv "$boot_dir/vmlinuz-$version.new" "$boot_dir/vmlinuz-$version"
+	if [ ! -f "$boot_dir/initrd.img-$version" ]; then
+		"$mkinitramfs" -o "$boot_dir/initrd.img-$version.new" "$version"
+		mv "$boot_dir/initrd.img-$version.new" "$boot_dir/initrd.img-$version"
+	fi
+done

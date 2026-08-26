@@ -381,8 +381,15 @@ prepare_target() {
 			/etc/profile.d/zz-live-config_xinit.sh 2>/dev/null || true
 		systemctl enable moonlight-slot-sync.service \
 			moonlight-update-confirm.timer >/dev/null 2>&1 || true
-		update-initramfs -u -k all >/dev/null
 	CHROOT
+	if [ -f "/boot/initrd.img-$kernel_version" ]; then
+		initramfs_mode=-u
+	else
+		initramfs_mode=-c
+	fi
+	chroot "$TARGET" update-initramfs "$initramfs_mode" \
+		-k "$kernel_version" >/dev/null \
+		|| die "The new system's initramfs could not be prepared. The current slot is still the default."
 
 	[ -n "$kernel_version" ] \
 		&& [ -f "/boot/vmlinuz-$kernel_version" ] \
