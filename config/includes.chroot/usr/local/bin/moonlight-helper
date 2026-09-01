@@ -42,6 +42,7 @@ than growing it later.
 
 import json
 import glob
+import hashlib
 import os
 import re
 import shutil
@@ -78,6 +79,7 @@ MAX_CLIENTS = 8
 CLIENT_IDLE_TIMEOUT = 120
 
 MLOS_CONF = "/etc/moonlight-os/moonlight-os.conf"
+NM_CONNECTIONS = "/etc/NetworkManager/system-connections"
 TOUCHPAD_CONF = "/etc/sway/config.d/40-touchpad.conf"
 CONFIG_LOCK = threading.Lock()
 DISPLAY_LOCK = threading.Lock()
@@ -445,25 +447,75 @@ def op_wifi_connect(args, emit):
     psk = args.get("psk")
     hidden = args.get("hidden", False)
 
-    if not isinstance(ssid, str) or not 0 < len(ssid) <= SSID_MAX:
-        raise Error(E_BAD_REQUEST, "ssid must be 1 to %d characters" % SSID_MAX)
+    if not isinstance(ssid, str) or not 0 < len(ssid.encode("utf-8")) <= SSID_MAX:
+        raise Error(E_BAD_REQUEST, "ssid must be 1 to %d bytes" % SSID_MAX)
     if psk is not None:
-        if not isinstance(psk, str) or not PSK_MIN <= len(psk) <= PSK_MAX:
-            raise Error(E_BAD_REQUEST, "psk must be %d to %d characters" % (PSK_MIN, PSK_MAX))
+        if not isinstance(psk, str) or not PSK_MIN <= len(psk.encode("utf-8")) <= PSK_MAX:
+            raise Error(E_BAD_REQUEST, "psk must be %d to %d bytes" % (PSK_MIN, PSK_MAX))
     if not isinstance(hidden, bool):
         raise Error(E_BAD_REQUEST, "hidden must be true or false")
 
     emit("Connecting to %s..." % ssid)
 
-    argv = ["nmcli", "--ask", "device", "wifi", "connect", ssid]
+    # Build a complete keyfile before asking NetworkManager to activate it.
+    # `nmcli --ask device wifi connect` registers a short-lived secret agent;
+    # when association fails once, NetworkManager asks that vanished agent for
+    # the secret again and logs "no agents available".  It can also try to
+    # persist the agent's partial secret dictionary without key-mgmt, producing
+    # the misleading "key-mgmt: property is missing" audit failure.
+    #
+    # Offline mode lets nmcli safely encode arbitrary SSIDs without changing
+    # the running connection.  The fixed dummy is replaced with the standard
+    # WPA2 256-bit key, so the user's passphrase never appears in argv or logs.
+    dummy_psk = "moonlight-temporary-password"
+    argv = ["nmcli", "--offline", "connection", "add", "type", "wifi",
+            "con-name", ssid, "ssid", ssid]
     if hidden:
-        argv += ["hidden", "yes"]
+        argv += ["wifi.hidden", "yes"]
+    if psk:
+        argv += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", dummy_psk]
 
-    # `password <psk>` exposes the secret in /proc and process listings. With
-    # --ask, nmcli reads it from its private stdin pipe instead.
-    out, err = run(argv, timeout=60, input_text=(psk + "\n") if psk else None)
-    if out is None:
+    keyfile, err = run(argv, timeout=15)
+    if keyfile is None:
         raise Error(E_FAILED, err)
+
+    match = re.search(r"(?m)^uuid=([0-9A-Fa-f-]{36})$", keyfile)
+    if not match:
+        raise Error(E_FAILED, "NetworkManager did not create a valid connection profile")
+    uuid = match.group(1)
+
+    if psk:
+        derived = hashlib.pbkdf2_hmac(
+            "sha1", psk.encode("utf-8"), ssid.encode("utf-8"), 4096, 32
+        ).hex()
+        marker = "psk=%s" % dummy_psk
+        if marker not in keyfile:
+            raise Error(E_FAILED, "NetworkManager omitted the Wi-Fi security settings")
+        keyfile = keyfile.replace(marker, "psk=%s" % derived, 1)
+
+    previous = [item["uuid"] for item in op_wifi_saved({}, emit)["connections"]
+                if item["name"] == ssid]
+    profile = os.path.join(NM_CONNECTIONS, "%s.nmconnection" % uuid)
+    write_text_atomic(profile, keyfile, 0o600)
+
+    out, err = run(["nmcli", "connection", "load", profile], timeout=15)
+    if out is None:
+        try:
+            os.unlink(profile)
+        except FileNotFoundError:
+            pass
+        raise Error(E_FAILED, err)
+
+    out, err = run(["nmcli", "connection", "up", "uuid", uuid], timeout=60)
+    if out is None:
+        run(["nmcli", "connection", "delete", "uuid", uuid], timeout=15)
+        raise Error(E_FAILED, err)
+
+    # Only discard superseded profiles after the replacement has actually
+    # connected, so a typo cannot destroy the last known-working password.
+    for old_uuid in previous:
+        if old_uuid != uuid:
+            run(["nmcli", "connection", "delete", "uuid", old_uuid], timeout=15)
 
     return op_status({}, emit)
 

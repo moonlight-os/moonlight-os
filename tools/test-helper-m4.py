@@ -3,6 +3,7 @@
 
 import importlib.machinery
 import importlib.util
+import hashlib
 import json
 import os
 import socket
@@ -96,13 +97,20 @@ class UsbSharedStateTest(unittest.TestCase):
 
 
 class HiddenWifiTest(unittest.TestCase):
-    def test_hidden_network_uses_fixed_nmcli_arguments(self):
+    def test_hidden_network_uses_complete_profile_without_exposing_psk(self):
         calls = []
+        profile = """[connection]\nid=Quiet Network\nuuid=11111111-2222-3333-4444-555555555555\ntype=wifi\n\n[wifi]\nssid=Quiet Network\nhidden=true\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=moonlight-temporary-password\n"""
 
         def fake_run(argv, timeout=30, input_text=None):
             del timeout
             calls.append((argv, input_text))
-            if argv[:5] == ["nmcli", "--ask", "device", "wifi", "connect"]:
+            if argv[:4] == ["nmcli", "--offline", "connection", "add"]:
+                return profile, None
+            if argv[:4] == ["nmcli", "--terse", "--fields", "UUID,NAME,TYPE"]:
+                return "", None
+            if argv[:3] == ["nmcli", "connection", "load"]:
+                return "loaded", None
+            if argv[:3] == ["nmcli", "connection", "up"]:
                 return "connected", None
             if argv[0] == "hostname":
                 return "moonlight-os\n", None
@@ -112,18 +120,58 @@ class HiddenWifiTest(unittest.TestCase):
                 return "", None
             raise AssertionError("unexpected command: %r" % argv)
 
-        with mock.patch.object(helper, "run", fake_run):
+        with mock.patch.object(helper, "run", fake_run), \
+             mock.patch.object(helper, "write_text_atomic") as write_profile:
             result = helper.op_wifi_connect(
                 {"ssid": "Quiet Network", "psk": "correct horse", "hidden": True},
                 lambda message: None,
             )
 
         self.assertEqual(result["hostname"], "moonlight-os")
-        self.assertEqual(
-            calls[0],
-            (["nmcli", "--ask", "device", "wifi", "connect", "Quiet Network",
-              "hidden", "yes"], "correct horse\n"),
-        )
+        self.assertEqual(calls[0][0], [
+            "nmcli", "--offline", "connection", "add", "type", "wifi",
+            "con-name", "Quiet Network", "ssid", "Quiet Network",
+            "wifi.hidden", "yes", "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.psk", "moonlight-temporary-password",
+        ])
+        self.assertFalse(any("correct horse" in arg for call, _ in calls for arg in call))
+        saved = write_profile.call_args.args[1]
+        derived = hashlib.pbkdf2_hmac(
+            "sha1", b"correct horse", b"Quiet Network", 4096, 32
+        ).hex()
+        self.assertIn("key-mgmt=wpa-psk", saved)
+        self.assertIn("psk=%s" % derived, saved)
+        self.assertNotIn("moonlight-temporary-password", saved)
+        self.assertEqual(write_profile.call_args.args[2], 0o600)
+
+    def test_failed_join_deletes_only_the_new_profile(self):
+        uuid = "11111111-2222-3333-4444-555555555555"
+        profile = "[connection]\nid=Home\nuuid=%s\ntype=wifi\n" % uuid
+        calls = []
+
+        def fake_run(argv, timeout=30, input_text=None):
+            del timeout, input_text
+            calls.append(argv)
+            if argv[:4] == ["nmcli", "--offline", "connection", "add"]:
+                return profile, None
+            if argv[:4] == ["nmcli", "--terse", "--fields", "UUID,NAME,TYPE"]:
+                return "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Home:802-11-wireless\n", None
+            if argv[:3] == ["nmcli", "connection", "load"]:
+                return "loaded", None
+            if argv[:3] == ["nmcli", "connection", "up"]:
+                return None, "authentication failed"
+            if argv[:3] == ["nmcli", "connection", "delete"]:
+                return "deleted", None
+            raise AssertionError("unexpected command: %r" % argv)
+
+        with mock.patch.object(helper, "run", fake_run), \
+             mock.patch.object(helper, "write_text_atomic"):
+            with self.assertRaises(helper.Error) as raised:
+                helper.op_wifi_connect({"ssid": "Home"}, lambda message: None)
+
+        self.assertEqual(raised.exception.message, "authentication failed")
+        deletes = [call for call in calls if call[:3] == ["nmcli", "connection", "delete"]]
+        self.assertEqual(deletes, [["nmcli", "connection", "delete", "uuid", uuid]])
 
     def test_hidden_flag_must_be_boolean(self):
         with self.assertRaises(helper.Error) as raised:
